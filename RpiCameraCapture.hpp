@@ -8,6 +8,9 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
 #include <jpeglib.h>
 
 class RpiCameraCapture {
@@ -21,7 +24,7 @@ public:
         
         Frame() = default;
         Frame(int w, int h, const std::string& fmt) 
-            : width(w), height(h), timestamp(std::chrono::steady_clock::now()), format(fmt) {}
+            : timestamp(std::chrono::steady_clock::now()), width(w), height(h), format(fmt) {}
     };
 
     struct Config {
@@ -29,7 +32,7 @@ public:
         int height = 1080;
         int cameraIndex = 1;
         int quality = 85;
-        std::string format = "yuv420";  // yuv420, rgb, jpeg
+        std::string format = "auto";  // auto, yuv420, mjpeg, raw (h264: not recommended)
         int timeout = 5000; // milliseconds
         bool verbose = false;
     };
@@ -67,7 +70,26 @@ private:
     std::thread readerThread_;
     FrameCallback frameCallback_;
     
+    // 동기식 프레임 캡처를 위한 큐와 동기화
+    std::queue<Frame> frameQueue_;
+    std::mutex frameMutex_;
+    std::condition_variable frameCondition_;
+    
+    // 메모리 풀 (성능 최적화)
+    static constexpr size_t BUFFER_POOL_SIZE = 8;
+    std::queue<std::vector<uint8_t>> bufferPool_;
+    std::mutex poolMutex_;
+    
     std::string buildRpiCamCommand() const;
+    std::vector<uint8_t> getBuffer(size_t size);
+    void returnBuffer(std::vector<uint8_t>&& buffer);
+    bool checkCameraHealth();
+    bool attemptReconnection();
+    
+    // 라즈베리파이 5 최적화 메서드들
+    bool isHighCPULoad() const;
+    void adaptCompressionLevel();
+    std::string selectOptimalFormat() const;
 };
 
 class JpegCompressor {
