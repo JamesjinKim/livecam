@@ -1,0 +1,71 @@
+# Compiled Object files
+*.o
+*.obj
+*.ko
+*.elf
+
+# Executables
+*.exe
+*.out
+*.app
+debug_utils
+demo_test_rpi
+test_camera_rpi
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Generated files
+*.tmp
+*.temp
+*.log
+
+# Build directories
+build/
+dist/
+bin/
+obj/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Camera capture files (large binary files)
+captures/
+demo/test_files/
+*.yuv
+*.raw
+*.bin
+
+# Temporary test images (keep source, ignore captures)
+demo/test_frame.jpg
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.cmake
+
+# Backup files
+*.bak
+*.backup
+Makefile.old
