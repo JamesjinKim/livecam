@@ -1,0 +1,148 @@
+# Raspberry Pi Camera Capture Makefile
+# Supports: V4L2, JPEG compression, DMA buffer management
+
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c11 -O2 -g
+INCLUDES = -I/usr/include
+LIBS = -ljpeg -lm
+
+# Source files
+COMMON_SOURCES = camera_capture.c
+TEST_SOURCES = test_camera.c
+DEBUG_SOURCES = debug_utils.c
+DEMO_SOURCES = demo_test.c
+
+# Object files
+COMMON_OBJECTS = $(COMMON_SOURCES:.c=.o)
+TEST_OBJECTS = $(TEST_SOURCES:.c=.o)
+DEBUG_OBJECTS = $(DEBUG_SOURCES:.c=.o)
+DEMO_OBJECTS = $(DEMO_SOURCES:.c=.o)
+
+# Target executables
+TEST_TARGET = test_camera
+DEBUG_TARGET = debug_utils
+DEMO_TARGET = demo_test
+
+# Default target
+all: $(TEST_TARGET) $(DEBUG_TARGET) $(DEMO_TARGET)
+
+# Test camera executable
+$(TEST_TARGET): $(COMMON_OBJECTS) $(TEST_OBJECTS)
+	@echo "Linking $(TEST_TARGET)..."
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+	@echo "Built $(TEST_TARGET) successfully"
+
+# Debug utility executable
+$(DEBUG_TARGET): $(COMMON_OBJECTS) $(DEBUG_OBJECTS)
+	@echo "Linking $(DEBUG_TARGET)..."
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+	@echo "Built $(DEBUG_TARGET) successfully"
+
+# Demo test executable
+$(DEMO_TARGET): $(COMMON_OBJECTS) $(DEMO_OBJECTS)
+	@echo "Linking $(DEMO_TARGET)..."
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+	@echo "Built $(DEMO_TARGET) successfully"
+
+# Compile source files to object files
+%.o: %.c camera_capture.h
+	@echo "Compiling $<..."
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+# Installation target (requires sudo)
+install: all
+	@echo "Installing executables to /usr/local/bin..."
+	sudo cp $(TEST_TARGET) /usr/local/bin/
+	sudo cp $(DEBUG_TARGET) /usr/local/bin/
+	@echo "Installation complete"
+
+# Uninstall target (requires sudo)
+uninstall:
+	@echo "Removing installed executables..."
+	sudo rm -f /usr/local/bin/$(TEST_TARGET)
+	sudo rm -f /usr/local/bin/$(DEBUG_TARGET)
+	@echo "Uninstall complete"
+
+# Check dependencies
+check-deps:
+	@echo "Checking dependencies..."
+	@command -v gcc >/dev/null 2>&1 || { echo "gcc is not installed. Install with: sudo apt install build-essential"; exit 1; }
+	@pkg-config --exists --print-errors libjpeg 2>/dev/null || { echo "libjpeg-dev is not installed. Install with: sudo apt install libjpeg-dev"; exit 1; }
+	@ls /usr/include/linux/videodev2.h >/dev/null 2>&1 || { echo "V4L2 headers not found. Install with: sudo apt install linux-headers-$(shell uname -r)"; exit 1; }
+	@echo "All dependencies satisfied"
+
+# Quick test (without camera)
+demo: $(DEMO_TARGET)
+	@echo "Running demo tests..."
+	./$(DEMO_TARGET)
+
+# Camera test (requires camera)
+test: $(TEST_TARGET) $(DEBUG_TARGET)
+	@echo "Running basic camera test..."
+	./$(TEST_TARGET) -v
+	@echo ""
+	@echo "Running debug utility..."
+	./$(DEBUG_TARGET)
+
+# Capture test frames
+capture-test: $(TEST_TARGET)
+	@echo "Capturing test frames..."
+	./$(TEST_TARGET) -t -f 5 -q 85 -v
+
+# Performance benchmark
+benchmark: $(TEST_TARGET)
+	@echo "Running performance benchmark..."
+	./$(TEST_TARGET) -b
+
+# Clean build artifacts
+clean:
+	@echo "Cleaning build artifacts..."
+	rm -f *.o
+	rm -f $(TEST_TARGET) $(DEBUG_TARGET) $(DEMO_TARGET)
+	rm -rf frames/ demo/
+	@echo "Clean complete"
+
+# Create output directories
+dirs:
+	@mkdir -p frames
+
+# Help target
+help:
+	@echo "Raspberry Pi Camera Capture - Build System"
+	@echo "==========================================="
+	@echo ""
+	@echo "Targets:"
+	@echo "  all           - Build all executables (default)"
+	@echo "  test_camera   - Build test camera executable"
+	@echo "  debug_utils   - Build debug utility"
+	@echo "  install       - Install to /usr/local/bin (requires sudo)"
+	@echo "  uninstall     - Remove from /usr/local/bin (requires sudo)"
+	@echo "  check-deps    - Check build dependencies"
+	@echo "  test          - Run basic functionality test"
+	@echo "  capture-test  - Capture test frames"
+	@echo "  benchmark     - Run performance benchmark"
+	@echo "  dirs          - Create output directories"
+	@echo "  clean         - Remove build artifacts"
+	@echo "  help          - Show this help message"
+	@echo ""
+	@echo "Dependencies:"
+	@echo "  - gcc (build-essential)"
+	@echo "  - libjpeg-dev"
+	@echo "  - linux-headers (for V4L2)"
+	@echo ""
+	@echo "Install dependencies:"
+	@echo "  sudo apt update"
+	@echo "  sudo apt install build-essential libjpeg-dev linux-headers-$(shell uname -r)"
+	@echo ""
+	@echo "Usage examples:"
+	@echo "  make                    # Build all"
+	@echo "  make test              # Quick test"
+	@echo "  make capture-test      # Capture 5 frames"
+	@echo "  make benchmark         # Performance test"
+	@echo "  make install           # System-wide install"
+
+# Specify phony targets
+.PHONY: all install uninstall check-deps test capture-test benchmark clean dirs help
+
+# Default goal
+.DEFAULT_GOAL := all

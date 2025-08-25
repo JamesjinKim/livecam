@@ -1,0 +1,245 @@
+라즈베리 파이 5 기반 블랙박스 시스템 개발
+
+C 언어 DMA 영상 저장과 Python FastAPI 웹 스트리밍 연동
+
+이 문서는 라즈베리 파이 5(64bit)에서 C 언어의 DMA(Direct Memory Access) 기술을 활용해 영상을 저장하고, Python FastAPI를 통해 웹 UI로 실시간 스트리밍하는 시스템을 구축하는 방법을 정리한 것입니다.
+
+1. 기술 스택 분리
+
+시스템은 C와 Python의 역할을 명확히 분리하여 각 언어의 장점을 극대화합니다.
+
+    C 언어 (블랙박스 영상 저장):
+
+        역할: 카메라 영상 캡처, DMA를 이용한 메모리 접근, 실시간 영상 파일 저장.
+
+        기술: V4L2(Video for Linux 2) API, DMA, mmap(), ioctl() 등 저수준 시스템 호출.
+
+        특징: 고성능, 최소한의 CPU 부하, 안정적인 장시간 녹화 가능.
+
+    Python (웹 UI 및 스트리밍):
+
+        역할: 사용자 인터페이스(UI), 시스템 제어(녹화 시작/중지), C 프로그램과의 통신, 웹 스트리밍 중계.
+
+        기술: FastAPI (웹 프레임워크), OpenCV/Numpy (영상 데이터 처리), Socket (C 프로그램과의 통신).
+
+        특징: 빠른 개발, 사용 편의성, 유연한 기능 확장성.
+
+2. 카메라 접근 경합 문제 해결
+
+두 프로세스(C와 Python)가 동시에 카메라에 접근하는 문제를 해결하기 위해 단일 프로세스 모델을 채택합니다.
+
+    C 프로세스: 카메라 장치에 대한 독점적인 접근 권한을 가집니다. 영상 캡처 및 저장은 물론, 웹 스트리밍을 위한 데이터도 C 프로세스가 생성합니다.
+
+    Python 프로세스: C 프로세스가 **소켓(Socket)**을 통해 보내는 영상을 수신하여 웹으로 중계하는 역할만 수행합니다. 이로써 카메라 접근 경합을 원천적으로 차단합니다.
+
+3. 구현 단계별 기술 스택 및 방법
+
+3.1 C 언어 구현 (영상 캡처 및 소켓 송신)
+
+    개발 환경 설정: sudo apt install build-essential 명령어로 GCC 컴파일러를 설치합니다.
+
+    V4L2 API 사용: open()으로 카메라 장치 파일(dev/video0)을 열고, ioctl() 함수를 이용해 해상도 및 포맷을 설정합니다.
+
+    DMA 버퍼 할당: V4L2_REQBUFS 요청으로 DMA 버퍼를 할당하고, mmap()으로 사용자 메모리에 매핑합니다. 이 과정을 통해 CPU 개입 없이 영상 데이터가 메모리로 직접 전송됩니다.
+
+    데이터 송신: 매핑된 메모리에서 프레임 데이터를 읽어와 JPEG 포맷으로 압축한 후, send() 함수를 사용해 TCP 소켓으로 파이썬 서버에 전송합니다.
+
+3.2 Python FastAPI 구현 (스트리밍 중계)
+
+    패키지 설치: pip install fastapi uvicorn opencv-python numpy 명령어로 필요한 라이브러리를 설치합니다.
+
+    소켓 서버 구현: Python 코드 내에서 socket 라이브러리를 사용해 C 프로그램과 통신할 TCP 소켓 서버를 열고, 연결을 기다립니다.
+
+    FastAPI 엔드포인트:
+
+        @app.get("/video_feed") 데코레이터를 사용하여 스트리밍을 위한 API 엔드포인트를 정의합니다.
+
+        내부 함수 generate_frames()는 소켓을 통해 C 프로그램에서 받은 영상 데이터를 OpenCV로 JPEG 인코딩합니다.
+
+        StreamingResponse 클래스를 활용하여 MJPEG(Motion JPEG) 형식으로 웹 브라우저에 실시간 스트리밍을 제공합니다.
+
+3.3 프론트엔드 (HTML)
+
+    아주 간단하게 <img src="/video_feed"> 태그를 사용하여 웹 브라우저가 FastAPI 엔드포인트를 통해 스트리밍 영상을 자동으로 표시하도록 합니다.
+
+4. 코드 흐름 요약
+
+    C 코드로 DMA를 통해 얻은 영상을 파이썬 FastAPI로 웹 UI에 스트리밍하려면, C와 파이썬 간의 데이터 통신 및 웹 스트리밍 기술 스택을 결합해야 합니다.
+
+기술 스택
+
+    C 언어: 영상 캡처 및 전처리 (V4L2, DMA).
+
+    Python 3.11: 백엔드 서버 (FastAPI).
+
+    데이터 통신:
+
+        IPC(Inter-Process Communication): C 프로세스와 파이썬 프로세스 간의 통신.
+
+        Socket: 네트워크 소켓을 이용한 통신 (TCP/IP).
+
+    웹 스트리밍:
+
+        FastAPI: 파이썬 웹 프레임워크.
+
+        OpenCV/Numpy: 영상 데이터 처리 및 인코딩.
+
+        CV2: 파이썬에서 OpenCV 라이브러리를 사용할 때 사용되는 모듈명.
+
+        HTML/CSS/JS: 프론트엔드 웹 UI.
+
+        MJPEG (Motion JPEG): 웹 브라우저에서 실시간 영상 스트리밍을 위한 포맷.
+
+구현 방법
+
+    C 코드 (영상 데이터 송신)
+
+        DMA를 통해 카메라에서 영상 데이터를 캡처하는 C 코드를 작성합니다.
+
+        캡처된 영상 프레임 데이터를 소켓을 통해 전송하도록 구현합니다. TCP/IP 소켓을 사용하면 안정적인 데이터 전송이 가능합니다.
+
+        C 프로그램은 socket(), bind(), listen(), accept(), send() 등의 함수를 사용해 데이터를 파이썬 프로세스에 보냅니다.
+
+        효율성을 위해 프레임 데이터를 JPEG 포맷으로 압축하여 전송하는 것을 고려할 수 있습니다.
+
+    Python FastAPI (백엔드 서버)
+
+        소켓 서버 구현: 파이썬 스크립트 내에서 TCP 소켓 서버를 열고, C 코드로부터 오는 영상 데이터를 수신합니다. socketserver 또는 asyncio 라이브러리를 사용해 비동기적으로 데이터를 받을 수 있습니다.
+
+        FastAPI 엔드포인트:
+
+            GET 요청을 처리하는 /video_feed와 같은 API 엔드포인트를 만듭니다.
+
+            이 엔드포인트는 스트리밍 응답을 생성합니다. FastAPI의 StreamingResponse 클래스를 사용해 MJPEG 스트림을 클라이언트(웹 브라우저)에게 보냅니다.
+
+            MJPEG 스트림은 여러 JPEG 이미지를 연속적으로 전송하는 방식입니다.
+
+        영상 처리: C 코드로부터 받은 raw 데이터를 NumPy 배열로 변환하고, OpenCV를 사용하여 JPEG로 인코딩합니다.
+
+    HTML (프론트엔드)
+
+        웹 UI를 위한 HTML 파일을 작성합니다.
+
+        <img> 태그를 사용해 /video_feed 엔드포인트를 src 속성에 지정합니다. 웹 브라우저는 이 엔드포인트를 통해 MJPEG 스트림을 받아 동영상처럼 표시합니다.
+
+코드 흐름 예시
+
+C 코드 (송신)
+C
+
+// DMA로 캡처된 raw data를 JPEG로 압축 후, 소켓으로 전송하는 로직
+// ... V4L2 설정 및 캡처
+// ... JPEG 압축 (libjpeg 사용 가능)
+// 소켓 생성 및 연결
+int client_socket = socket(AF_INET, SOCK_STREAM, 0);
+// ... 연결
+// 프레임 전송
+// send(client_socket, jpeg_data, jpeg_size, 0);
+
+Python FastAPI (수신 및 중계)
+Python
+
+# C 코드로부터 데이터를 받는 소켓 서버
+import socket
+
+TCP_IP = '127.0.0.1'
+TCP_PORT = 5000
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind((TCP_IP, TCP_PORT))
+s.listen(1)
+
+conn, addr = s.accept()
+# ... C 코드로부터 데이터 수신 루프
+
+# FastAPI 엔드포인트
+from fastapi import FastAPI, Response
+import numpy as np
+import cv2
+
+app = FastAPI()
+
+def generate_frames():
+    while True:
+        # C 코드로부터 프레임 데이터 수신
+        frame_data = conn.recv(1024) # 소켓 데이터 수신
+        # raw 데이터 -> numpy 배열 -> JPEG 인코딩
+        frame = np.frombuffer(frame_data, dtype=np.uint8)
+        _, buffer = cv2.imencode('.jpg', frame)
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+
+@app.get("/video_feed")
+async def video_feed():
+    return Response(generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+HTML (수신 및 표시)
+HTML
+
+<img src="/video_feed" alt="Video Stream">
+
+이 구조는 C 코드의 고성능 영상 처리 능력과 파이썬의 편리한 웹 개발 환경을 효과적으로 결합하여 안정적인 실시간 영상 스트리밍을 구현할 수 있습니다.
+
+
+주요 아키텍처:
+  - C: V4L2 API로 카메라 접근, DMA 버퍼 관리, JPEG 압축, 파일 저장
+  - 카메라 디바이스: /dev/video0 (YUYV 4:2:2 포맷 지원)
+  - 해상도: 1920x1080 기본
+
+ ✅ V4L2 API를 통한 카메라 접근
+  - 라즈베리파이 카메라 디바이스 감지 및 설정
+  - 다양한 포맷 지원 (YUYV, RGB 등)
+  - 유연한 해상도 설정
+
+  ✅ DMA 버퍼 관리 구현
+  - 메모리 매핑을 통한 고성능 데이터 전송
+  - 멀티버퍼링으로 프레임 드롭 최소화
+  - 안전한 메모리 관리 및 정리
+
+  ✅ JPEG 압축 구현
+  - YUYV → RGB 변환 알고리즘
+  - libjpeg을 사용한 고품질 압축 (97.6% 압축률!)
+  - 품질 조절 가능 (1-100)
+
+  ✅ 파일 저장 시스템 구현
+  - RAW 데이터 및 JPEG 파일 저장
+  - 자동 디렉토리 생성
+  - 타임스탬프 기반 파일 관리
+
+  🧪 테스트 및 디버깅
+
+  테스트 유틸리티 완비:
+  - demo_test - 카메라 없이도 API 테스트 가능
+  - test_camera - 실제 카메라 캡처 테스트
+  - debug_utils - 시스템 분석 및 디버깅
+
+  검증된 성능:
+  - 640x480 프레임: 614KB → 14KB (97.6% 압축)
+  - JPEG 품질 85로 고품질 유지
+  - 메모리 효율적인 DMA 버퍼 관리
+
+  📁 생성된 파일들
+
+  camera_capture.h      # API 헤더
+  camera_capture.c      # 메인 구현
+  test_camera.c         # 테스트 프로그램
+  debug_utils.c         # 디버깅 도구
+  demo_test.c           # 데모 테스트
+  Makefile             # 빌드 시스템
+  README_C_COMPONENTS.md # 문서
+
+  🚀 사용 방법
+
+  # 빌드
+  make all
+
+  # 카메라 없이 테스트 
+  make demo
+
+  # 실제 카메라 테스트 (카메라 연결 후)
+  make test
+  make capture-test
+
+
+
+  rpicam-hello -t 500 --camera 0
+  rpicam-hello -t 500 --camera 1

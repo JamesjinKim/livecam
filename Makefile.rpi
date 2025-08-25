@@ -1,0 +1,146 @@
+# Practical C++ Makefile for Raspberry Pi Camera Capture
+# Uses rpicam-vid pipeline instead of complex libcamera API
+
+CXX = g++
+CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -g
+INCLUDES = -I. 
+
+# JPEG library
+JPEG_LIBS = -ljpeg
+
+# Threading
+THREAD_LIBS = -lpthread
+
+# All libraries
+LIBS = $(JPEG_LIBS) $(THREAD_LIBS)
+
+# Source files
+COMMON_SOURCES = RpiCameraCapture.cpp
+TEST_SOURCES = TestCameraRpi.cpp
+DEMO_SOURCES = DemoTestRpi.cpp
+
+# Object files
+COMMON_OBJECTS = $(COMMON_SOURCES:.cpp=.o)
+TEST_OBJECTS = $(TEST_SOURCES:.cpp=.o)
+DEMO_OBJECTS = $(DEMO_SOURCES:.cpp=.o)
+
+# Target executables
+TEST_TARGET = test_camera_rpi
+DEMO_TARGET = demo_test_rpi
+
+# Default target
+all: $(TEST_TARGET) $(DEMO_TARGET)
+
+# Test camera executable
+$(TEST_TARGET): $(COMMON_OBJECTS) $(TEST_OBJECTS)
+	@echo "Linking $(TEST_TARGET)..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+	@echo "Built $(TEST_TARGET) successfully"
+
+# Demo test executable  
+$(DEMO_TARGET): $(COMMON_OBJECTS) $(DEMO_OBJECTS)
+	@echo "Linking $(DEMO_TARGET)..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+	@echo "Built $(DEMO_TARGET) successfully"
+
+# Compile source files to object files
+%.o: %.cpp RpiCameraCapture.hpp
+	@echo "Compiling $<..."
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Installation target (requires sudo)
+install: all
+	@echo "Installing executables to /usr/local/bin..."
+	sudo cp $(TEST_TARGET) /usr/local/bin/
+	sudo cp $(DEMO_TARGET) /usr/local/bin/
+	@echo "Installation complete"
+
+# Uninstall target (requires sudo)
+uninstall:
+	@echo "Removing installed executables..."
+	sudo rm -f /usr/local/bin/$(TEST_TARGET)
+	sudo rm -f /usr/local/bin/$(DEMO_TARGET)
+	@echo "Uninstall complete"
+
+# Check dependencies
+check-deps:
+	@echo "Checking dependencies..."
+	@command -v g++ >/dev/null 2>&1 || { echo "g++ is not installed. Install with: sudo apt install build-essential"; exit 1; }
+	@command -v rpicam-vid >/dev/null 2>&1 || { echo "rpicam-vid is not installed. Install with: sudo apt install rpicam-apps"; exit 1; }
+	@pkg-config --exists libjpeg || { echo "libjpeg-dev is not installed. Install with: sudo apt install libjpeg-dev"; exit 1; }
+	@echo "All dependencies satisfied"
+
+# Quick test (without camera)
+demo: $(DEMO_TARGET)
+	@echo "Running demo tests..."
+	./$(DEMO_TARGET)
+
+# Camera test (requires camera)
+test: $(TEST_TARGET)
+	@echo "Running basic camera test..."
+	./$(TEST_TARGET) -v
+
+# Capture test frames
+capture-test: $(TEST_TARGET)
+	@echo "Capturing test frames..."
+	./$(TEST_TARGET) -t -f 5 -v
+
+# Performance benchmark
+benchmark: $(TEST_TARGET)
+	@echo "Running performance benchmark..."
+	./$(TEST_TARGET) -b
+
+# Clean build artifacts
+clean:
+	@echo "Cleaning build artifacts..."
+	rm -f *.o
+	rm -f $(TEST_TARGET) $(DEMO_TARGET)
+	rm -rf captures/ demo/
+	@echo "Clean complete"
+
+# Create output directories
+dirs:
+	@mkdir -p captures demo
+
+# Help target
+help:
+	@echo "Raspberry Pi Camera Capture - Practical C++ Build System"
+	@echo "======================================================="
+	@echo ""
+	@echo "This version uses rpicam-vid pipeline for maximum compatibility"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all           - Build all executables (default)"
+	@echo "  test_camera_rpi - Build camera test executable"
+	@echo "  demo_test_rpi   - Build demo test executable"
+	@echo "  install       - Install to /usr/local/bin (requires sudo)"
+	@echo "  uninstall     - Remove from /usr/local/bin (requires sudo)"
+	@echo "  check-deps    - Check build dependencies"
+	@echo "  demo          - Run demo tests (no camera needed)"
+	@echo "  test          - Run basic camera test"
+	@echo "  capture-test  - Capture test frames"
+	@echo "  benchmark     - Run performance benchmark"
+	@echo "  dirs          - Create output directories"
+	@echo "  clean         - Remove build artifacts"
+	@echo "  help          - Show this help message"
+	@echo ""
+	@echo "Dependencies:"
+	@echo "  - g++ with C++17 support"
+	@echo "  - rpicam-apps (rpicam-vid)"
+	@echo "  - libjpeg-dev"
+	@echo ""
+	@echo "Install dependencies:"
+	@echo "  sudo apt update"
+	@echo "  sudo apt install build-essential rpicam-apps libjpeg-dev"
+	@echo ""
+	@echo "Usage examples:"
+	@echo "  make -f Makefile.rpi all           # Build all"
+	@echo "  make -f Makefile.rpi demo          # Test without camera"
+	@echo "  make -f Makefile.rpi test          # Basic camera test"  
+	@echo "  make -f Makefile.rpi capture-test  # Capture 5 frames"
+
+# Specify phony targets
+.PHONY: all install uninstall check-deps demo test capture-test benchmark clean dirs help
+
+# Default goal
+.DEFAULT_GOAL := all
