@@ -56,6 +56,15 @@ demo/test_files/
 *.raw
 *.bin
 
+# Video test files (generated during testing)
+test_*.mp4
+test_*.yuv
+videos/640x480/test_*
+videos/hd/test_*
+videos/tests/test_*
+blackbox_*.yuv
+blackbox_*.mp4
+
 # Temporary test images (keep source, ignore captures)
 demo/test_frame.jpg
 
