@@ -231,6 +231,11 @@ WantedBy=multi-user.target
 - 기술 문서는 CLAUDE.md에 추가
 - 사용자 가이드는 README.md에 추가
 - 예제 코드와 실행 결과 포함
+- 아래 4개의 문서 외에 새로운 문서 작성 금지!
+├── README.md             # 사용자 가이드 (현재 문서)
+├── CLAUDE.md             # 개발자 기술 문서
+├── PRD.md                # 제품 요구사항 문서
+├── QUICK_START.md        # 빠른 시작 가이드
 
 ## 📞 문의 및 지원
 
