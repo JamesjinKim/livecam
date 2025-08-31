@@ -2,31 +2,31 @@
 # start_blackbox.sh
 # 라즈베리파이 5 블랙박스 시스템 간편 시작 스크립트
 
-echo "🚗 라즈베리파이 5 블랙박스 시스템"
+echo "라즈베리파이 5 블랙박스 시스템"
 echo
 
 # 사용법 출력
 show_usage() {
-    echo "📋 사용법:"
+    echo "사용법:"
     echo
-    echo "🎥 단일 카메라 모드:"
+    echo "단일 카메라 모드:"
     echo "  ./start_blackbox.sh cam0-640      # 카메라 0번 - 640x480"
     echo "  ./start_blackbox.sh cam1-640      # 카메라 1번 - 640x480"  
     echo "  ./start_blackbox.sh cam0-hd       # 카메라 0번 - HD 1280x720"
     echo "  ./start_blackbox.sh cam1-hd       # 카메라 1번 - HD 1280x720"
     echo
-    echo "🚗 듀얼 카메라 모드:"
+    echo "듀얼 카메라 모드:"
     echo "  ./start_blackbox.sh dual-640      # 두 카메라 동시 - 640x480"
     echo "  ./start_blackbox.sh dual-hd       # 두 카메라 동시 - HD 1280x720"
     echo
-    echo "⚡ 최적화 모드:"
+    echo "최적화 모드:"
     echo "  ./start_blackbox.sh optimized     # mmap 최적화 (카메라 0번)"
     echo
 }
 
 # 파라미터 확인
 if [ $# -eq 0 ]; then
-    echo "❌ 화질 옵션을 선택하세요!"
+    echo "화질 옵션을 선택하세요!"
     show_usage
     exit 1
 fi
@@ -50,16 +50,16 @@ esac
 # 출력 디렉토리 생성
 mkdir -p "$OUTPUT_DIR"
 
-echo "🎥 블랙박스 모드: $MODE"
-echo "📅 시작 시간: $(date)"
-echo "📁 저장 위치: $OUTPUT_DIR/"
+echo "블랙박스 모드: $MODE"
+echo "시작 시간: $(date)"
+echo "저장 위치: $OUTPUT_DIR/"
 echo
 
 case $MODE in
     "cam0-640")
-        echo "📹 카메라 0번 - 640x480 블랙박스 시작..."
-        echo "💾 파일: $OUTPUT_DIR/blackbox_cam0_640_${TIMESTAMP}.yuv"
-        echo "💡 CPU 사용률: ~5-8% (최적화됨)"
+        echo "카메라 0번 - 640x480 블랙박스 시작..."
+        echo "파일: $OUTPUT_DIR/blackbox_cam0_640_${TIMESTAMP}.yuv"
+        echo "CPU 사용률: ~5-8% (최적화됨)"
         echo
         
         rpicam-vid --camera 0 --width 640 --height 480 \
@@ -68,9 +68,9 @@ case $MODE in
         ;;
         
     "cam1-640")
-        echo "📹 카메라 1번 - 640x480 블랙박스 시작..."
-        echo "💾 파일: $OUTPUT_DIR/blackbox_cam1_640_${TIMESTAMP}.yuv"
-        echo "💡 CPU 사용률: ~5-8% (최적화됨)"
+        echo "카메라 1번 - 640x480 블랙박스 시작..."
+        echo "파일: $OUTPUT_DIR/blackbox_cam1_640_${TIMESTAMP}.yuv"
+        echo "CPU 사용률: ~5-8% (최적화됨)"
         echo
         
         rpicam-vid --camera 1 --width 640 --height 480 \
@@ -79,9 +79,9 @@ case $MODE in
         ;;
         
     "cam0-hd")
-        echo "📹 카메라 0번 - HD 1280x720 블랙박스 시작..."  
-        echo "💾 파일: $OUTPUT_DIR/blackbox_cam0_hd_${TIMESTAMP}.yuv"
-        echo "⚠️  HD 모드: CPU 사용률 ~13-15%"
+        echo "카메라 0번 - HD 1280x720 블랙박스 시작..."  
+        echo "파일: $OUTPUT_DIR/blackbox_cam0_hd_${TIMESTAMP}.yuv"
+        echo "HD 모드: CPU 사용률 ~13-15%"
         echo
         
         rpicam-vid --camera 0 --width 1280 --height 720 \
@@ -90,9 +90,9 @@ case $MODE in
         ;;
         
     "cam1-hd")
-        echo "📹 카메라 1번 - HD 1280x720 블랙박스 시작..."  
-        echo "💾 파일: $OUTPUT_DIR/blackbox_cam1_hd_${TIMESTAMP}.yuv"
-        echo "⚠️  HD 모드: CPU 사용률 ~13-15%"
+        echo "카메라 1번 - HD 1280x720 블랙박스 시작..."  
+        echo "파일: $OUTPUT_DIR/blackbox_cam1_hd_${TIMESTAMP}.yuv"
+        echo "HD 모드: CPU 사용률 ~13-15%"
         echo
         
         rpicam-vid --camera 1 --width 1280 --height 720 \
@@ -101,11 +101,11 @@ case $MODE in
         ;;
         
     "dual-640")
-        echo "🚗 듀얼 카메라 - 640x480 블랙박스 시작..."
-        echo "💾 전방: $OUTPUT_DIR/blackbox_cam0_640_${TIMESTAMP}.yuv"
-        echo "💾 후방: $OUTPUT_DIR/blackbox_cam1_640_${TIMESTAMP}.yuv"
-        echo "💡 CPU 사용률: ~10-16% (두 카메라)"
-        echo "🚨 Ctrl+C로 두 카메라 동시 중단"
+        echo "듀얼 카메라 - 640x480 블랙박스 시작..."
+        echo "전방: $OUTPUT_DIR/blackbox_cam0_640_${TIMESTAMP}.yuv"
+        echo "후방: $OUTPUT_DIR/blackbox_cam1_640_${TIMESTAMP}.yuv"
+        echo "CPU 사용률: ~10-16% (두 카메라)"
+        echo "Ctrl+C로 두 카메라 동시 중단"
         echo
         
         # 백그라운드에서 카메라 0 (전방)
@@ -133,11 +133,11 @@ case $MODE in
         ;;
         
     "dual-hd")
-        echo "🚗 듀얼 카메라 - HD 1280x720 블랙박스 시작..."
-        echo "💾 전방: $OUTPUT_DIR/blackbox_cam0_hd_${TIMESTAMP}.yuv"
-        echo "💾 후방: $OUTPUT_DIR/blackbox_cam1_hd_${TIMESTAMP}.yuv" 
-        echo "⚠️  HD 듀얼 모드: CPU 사용률 ~25-30%"
-        echo "🚨 Ctrl+C로 두 카메라 동시 중단"
+        echo "듀얼 카메라 - HD 1280x720 블랙박스 시작..."
+        echo "전방: $OUTPUT_DIR/blackbox_cam0_hd_${TIMESTAMP}.yuv"
+        echo "후방: $OUTPUT_DIR/blackbox_cam1_hd_${TIMESTAMP}.yuv" 
+        echo " HD 듀얼 모드: CPU 사용률 ~25-30%"
+        echo "Ctrl+C로 두 카메라 동시 중단"
         echo
         
         # HD 듀얼 카메라
@@ -162,10 +162,10 @@ case $MODE in
         ;;
         
     "optimized"|"mmap")
-        echo "⚡ mmap 최적화 블랙박스 시작 (카메라 0번)..."
-        echo "💾 파일: $OUTPUT_DIR/blackbox_optimized_${TIMESTAMP}.yuv"
-        echo "🚀 CPU 사용률: ~3-5% (최고 효율성)"
-        echo "💡 mmap 메모리 맵 I/O 사용"
+        echo "mmap 최적화 블랙박스 시작 (카메라 0번)..."
+        echo "파일: $OUTPUT_DIR/blackbox_optimized_${TIMESTAMP}.yuv"
+        echo "CPU 사용률: ~3-5% (최고 효율성)"
+        echo "mmap 메모리 맵 I/O 사용"
         echo
         
         # 최적화 시스템 빌드 확인
