@@ -1,32 +1,41 @@
 #!/bin/bash
 # start_blackbox.sh
 # 라즈베리파이 5 블랙박스 시스템 간편 시작 스크립트
+# 현재 시스템과 통합된 실시간 테스트 가능한 블랙박스
 
-echo "라즈베리파이 5 블랙박스 시스템"
+echo "🎥 라즈베리파이 5 블랙박스 시스템"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo
 
 # 사용법 출력
 show_usage() {
-    echo "사용법:"
+    echo "💡 사용법:"
     echo
-    echo "단일 카메라 모드:"
+    echo "📹 단일 카메라 모드 (MP4 직접 녹화):"
     echo "  ./start_blackbox.sh cam0-640      # 카메라 0번 - 640x480"
     echo "  ./start_blackbox.sh cam1-640      # 카메라 1번 - 640x480"  
-    echo "  ./start_blackbox.sh cam0-hd       # 카메라 0번 - HD 1280x720"
-    echo "  ./start_blackbox.sh cam1-hd       # 카메라 1번 - HD 1280x720"
+    echo "  ./start_blackbox.sh cam0-720p     # 카메라 0번 - 1280x720"
+    echo "  ./start_blackbox.sh cam1-720p     # 카메라 1번 - 1280x720"
+    echo "  ./start_blackbox.sh cam0-1080p    # 카메라 0번 - 1920x1080"
+    echo "  ./start_blackbox.sh cam1-1080p    # 카메라 1번 - 1920x1080"
     echo
-    echo "듀얼 카메라 모드:"
+    echo "🎬 듀얼 카메라 모드:"
     echo "  ./start_blackbox.sh dual-640      # 두 카메라 동시 - 640x480"
-    echo "  ./start_blackbox.sh dual-hd       # 두 카메라 동시 - HD 1280x720"
+    echo "  ./start_blackbox.sh dual-720p     # 두 카메라 동시 - 1280x720"
+    echo "  ./start_blackbox.sh dual-1080p    # 두 카메라 동시 - 1920x1080"
     echo
-    echo "최적화 모드:"
-    echo "  ./start_blackbox.sh optimized     # mmap 최적화 (카메라 0번)"
+    echo "🌐 스트리밍 모드:"
+    echo "  ./start_blackbox.sh stream        # 실시간 MJPEG 웹 스트리밍 (포트 8080)"
+    echo
+    echo "⚡ 빠른 테스트:"
+    echo "  ./start_blackbox.sh quick         # 3초 듀얼 카메라 테스트 (640x480)"
+    echo "  ./start_blackbox.sh demo          # 10초 모든 해상도 데모"
     echo
 }
 
 # 파라미터 확인
 if [ $# -eq 0 ]; then
-    echo "화질 옵션을 선택하세요!"
+    echo "❌ 모드를 선택하세요!"
     show_usage
     exit 1
 fi
@@ -34,90 +43,139 @@ fi
 MODE=$1
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
-# 해상도별 출력 디렉토리 설정
+# 현재 시스템과 통합된 디렉토리 구조 사용
 case $MODE in
-    *-640|dual-640|optimized)
+    *-640|dual-640|quick)
         OUTPUT_DIR="videos/640x480"
+        RES_WIDTH=640
+        RES_HEIGHT=480
         ;;
-    *-hd|dual-hd)
-        OUTPUT_DIR="videos/hd"
+    *-720p|dual-720p)
+        OUTPUT_DIR="videos/1280x720"
+        RES_WIDTH=1280
+        RES_HEIGHT=720
+        ;;
+    *-1080p|dual-1080p)
+        OUTPUT_DIR="videos/1920x1080" 
+        RES_WIDTH=1920
+        RES_HEIGHT=1080
+        ;;
+    stream|demo)
+        # 스트리밍/데모 모드는 별도 처리
         ;;
     *)
         OUTPUT_DIR="videos/640x480"  # 기본값
+        RES_WIDTH=640
+        RES_HEIGHT=480
         ;;
 esac
 
-# 출력 디렉토리 생성
-mkdir -p "$OUTPUT_DIR"
+# 카메라별 디렉토리 생성
+if [[ "$MODE" != "stream" ]]; then
+    mkdir -p "$OUTPUT_DIR/cam0"
+    mkdir -p "$OUTPUT_DIR/cam1"
+fi
 
-echo "블랙박스 모드: $MODE"
-echo "시작 시간: $(date)"
-echo "저장 위치: $OUTPUT_DIR/"
+echo "🎬 블랙박스 모드: $MODE"
+echo "⏰ 시작 시간: $(date)"
+if [[ "$MODE" != "stream" && "$MODE" != "demo" ]]; then
+    echo "📁 저장 위치: $OUTPUT_DIR/"
+    echo "📺 해상도: ${RES_WIDTH}x${RES_HEIGHT}"
+fi
 echo
 
 case $MODE in
     "cam0-640")
-        echo "카메라 0번 - 640x480 블랙박스 시작..."
-        echo "파일: $OUTPUT_DIR/blackbox_cam0_640_${TIMESTAMP}.yuv"
-        echo "CPU 사용률: ~5-8% (최적화됨)"
+        echo "📷 카메라 0번 - 640x480 MP4 블랙박스 시작..."
+        echo "📁 파일: $OUTPUT_DIR/cam0/blackbox_cam0_640_${TIMESTAMP}.mp4"
+        echo "🚀 30fps, H.264 인코딩"
+        echo "⏹️  Ctrl+C로 중단"
         echo
         
         rpicam-vid --camera 0 --width 640 --height 480 \
-            --codec yuv420 --output "$OUTPUT_DIR/blackbox_cam0_640_${TIMESTAMP}.yuv" \
-            --timeout 0 --nopreview --framerate 30 --flush
+            --timeout 0 --framerate 30 --nopreview \
+            --output "$OUTPUT_DIR/cam0/blackbox_cam0_640_${TIMESTAMP}.mp4"
         ;;
         
     "cam1-640")
-        echo "카메라 1번 - 640x480 블랙박스 시작..."
-        echo "파일: $OUTPUT_DIR/blackbox_cam1_640_${TIMESTAMP}.yuv"
-        echo "CPU 사용률: ~5-8% (최적화됨)"
+        echo "📷 카메라 1번 - 640x480 MP4 블랙박스 시작..."
+        echo "📁 파일: $OUTPUT_DIR/cam1/blackbox_cam1_640_${TIMESTAMP}.mp4"
+        echo "🚀 30fps, H.264 인코딩"
+        echo "⏹️  Ctrl+C로 중단"
         echo
         
         rpicam-vid --camera 1 --width 640 --height 480 \
-            --codec yuv420 --output "$OUTPUT_DIR/blackbox_cam1_640_${TIMESTAMP}.yuv" \
-            --timeout 0 --nopreview --framerate 30 --flush
+            --timeout 0 --framerate 30 --nopreview \
+            --output "$OUTPUT_DIR/cam1/blackbox_cam1_640_${TIMESTAMP}.mp4"
         ;;
         
-    "cam0-hd")
-        echo "카메라 0번 - HD 1280x720 블랙박스 시작..."  
-        echo "파일: $OUTPUT_DIR/blackbox_cam0_hd_${TIMESTAMP}.yuv"
-        echo "HD 모드: CPU 사용률 ~13-15%"
+    "cam0-720p")
+        echo "📷 카메라 0번 - 720p MP4 블랙박스 시작..."  
+        echo "📁 파일: $OUTPUT_DIR/cam0/blackbox_cam0_720p_${TIMESTAMP}.mp4"
+        echo "🚀 30fps, H.264 인코딩"
+        echo "⏹️  Ctrl+C로 중단"
         echo
         
         rpicam-vid --camera 0 --width 1280 --height 720 \
-            --codec yuv420 --output "$OUTPUT_DIR/blackbox_cam0_hd_${TIMESTAMP}.yuv" \
-            --timeout 0 --nopreview --framerate 30 --flush
+            --timeout 0 --framerate 30 --nopreview \
+            --output "$OUTPUT_DIR/cam0/blackbox_cam0_720p_${TIMESTAMP}.mp4"
         ;;
         
-    "cam1-hd")
-        echo "카메라 1번 - HD 1280x720 블랙박스 시작..."  
-        echo "파일: $OUTPUT_DIR/blackbox_cam1_hd_${TIMESTAMP}.yuv"
-        echo "HD 모드: CPU 사용률 ~13-15%"
+    "cam1-720p")
+        echo "📷 카메라 1번 - 720p MP4 블랙박스 시작..."  
+        echo "📁 파일: $OUTPUT_DIR/cam1/blackbox_cam1_720p_${TIMESTAMP}.mp4"
+        echo "🚀 30fps, H.264 인코딩"
+        echo "⏹️  Ctrl+C로 중단"
         echo
         
         rpicam-vid --camera 1 --width 1280 --height 720 \
-            --codec yuv420 --output "$OUTPUT_DIR/blackbox_cam1_hd_${TIMESTAMP}.yuv" \
-            --timeout 0 --nopreview --framerate 30 --flush
+            --timeout 0 --framerate 30 --nopreview \
+            --output "$OUTPUT_DIR/cam1/blackbox_cam1_720p_${TIMESTAMP}.mp4"
+        ;;
+
+    "cam0-1080p")
+        echo "📷 카메라 0번 - 1080p MP4 블랙박스 시작..."  
+        echo "📁 파일: $OUTPUT_DIR/cam0/blackbox_cam0_1080p_${TIMESTAMP}.mp4"
+        echo "🚀 30fps, H.264 인코딩"
+        echo "⏹️  Ctrl+C로 중단"
+        echo
+        
+        rpicam-vid --camera 0 --width 1920 --height 1080 \
+            --timeout 0 --framerate 30 --nopreview \
+            --output "$OUTPUT_DIR/cam0/blackbox_cam0_1080p_${TIMESTAMP}.mp4"
+        ;;
+        
+    "cam1-1080p")
+        echo "📷 카메라 1번 - 1080p MP4 블랙박스 시작..."  
+        echo "📁 파일: $OUTPUT_DIR/cam1/blackbox_cam1_1080p_${TIMESTAMP}.mp4"
+        echo "🚀 30fps, H.264 인코딩"
+        echo "⏹️  Ctrl+C로 중단"
+        echo
+        
+        rpicam-vid --camera 1 --width 1920 --height 1080 \
+            --timeout 0 --framerate 30 --nopreview \
+            --output "$OUTPUT_DIR/cam1/blackbox_cam1_1080p_${TIMESTAMP}.mp4"
         ;;
         
     "dual-640")
-        echo "듀얼 카메라 - 640x480 블랙박스 시작..."
-        echo "전방: $OUTPUT_DIR/blackbox_cam0_640_${TIMESTAMP}.yuv"
-        echo "후방: $OUTPUT_DIR/blackbox_cam1_640_${TIMESTAMP}.yuv"
-        echo "CPU 사용률: ~10-16% (두 카메라)"
-        echo "Ctrl+C로 두 카메라 동시 중단"
+        echo "🎬 듀얼 카메라 - 640x480 MP4 블랙박스 시작..."
+        echo "📁 전방: $OUTPUT_DIR/cam0/blackbox_cam0_640_${TIMESTAMP}.mp4"
+        echo "📁 후방: $OUTPUT_DIR/cam1/blackbox_cam1_640_${TIMESTAMP}.mp4"
+        echo "🚀 30fps, 듀얼 H.264 인코딩"
+        echo "⏹️  Ctrl+C로 두 카메라 동시 중단"
+        echo "💡 직접 MP4로 저장"
         echo
         
-        # 백그라운드에서 카메라 0 (전방)
+        # 백그라운드에서 카메라 0 (전방) - 직접 MP4로 저장
         rpicam-vid --camera 0 --width 640 --height 480 \
-            --codec yuv420 --output "$OUTPUT_DIR/blackbox_cam0_640_${TIMESTAMP}.yuv" \
-            --timeout 0 --nopreview --framerate 30 --flush &
+            --timeout 0 --framerate 30 --nopreview --flush \
+            --output "$OUTPUT_DIR/cam0/blackbox_cam0_640_${TIMESTAMP}.mp4" &
         CAM0_PID=$!
         
-        # 백그라운드에서 카메라 1 (후방)
+        # 백그라운드에서 카메라 1 (후방) - 직접 MP4로 저장
         rpicam-vid --camera 1 --width 640 --height 480 \
-            --codec yuv420 --output "$OUTPUT_DIR/blackbox_cam1_640_${TIMESTAMP}.yuv" \
-            --timeout 0 --nopreview --framerate 30 --flush &
+            --timeout 0 --framerate 30 --nopreview --flush \
+            --output "$OUTPUT_DIR/cam1/blackbox_cam1_640_${TIMESTAMP}.mp4" &
         CAM1_PID=$!
         
         echo "✅ 카메라 0 (전방) PID: $CAM0_PID"
@@ -125,70 +183,186 @@ case $MODE in
         echo
         echo "🛑 중단하려면 Ctrl+C 누르세요..."
         
-        # 종료 신호 처리
-        trap 'echo ""; echo "⏹️  듀얼 녹화 중단 중..."; kill $CAM0_PID $CAM1_PID 2>/dev/null; wait; echo "✅ 듀얼 녹화 완료"; exit 0' INT
+        # 종료 신호 처리 - SIGINT 전달로 정상 종료
+        trap 'echo ""; echo "⏹️  듀얼 녹화 중단 중..."; 
+              echo "   📝 정상 종료 신호 전송 중...";
+              kill -INT $CAM0_PID $CAM1_PID 2>/dev/null; 
+              echo "   ⏳ MP4 파일 마무리 중... (3초 대기)";
+              sleep 3;
+              if kill -0 $CAM0_PID 2>/dev/null || kill -0 $CAM1_PID 2>/dev/null; then
+                  echo "   ⚠️  강제 종료 실행";
+                  kill -TERM $CAM0_PID $CAM1_PID 2>/dev/null;
+                  sleep 1;
+                  kill -9 $CAM0_PID $CAM1_PID 2>/dev/null;
+              fi;
+              wait;
+              echo "✅ 듀얼 녹화 완료"; 
+              echo "📁 저장된 파일:";
+              ls -lah "$OUTPUT_DIR"/cam0/blackbox_*640_${TIMESTAMP}.mp4 2>/dev/null;
+              ls -lah "$OUTPUT_DIR"/cam1/blackbox_*640_${TIMESTAMP}.mp4 2>/dev/null;
+              echo "🎬 영상 정보:";
+              ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$OUTPUT_DIR"/cam0/blackbox_*640_${TIMESTAMP}.mp4 2>/dev/null | xargs printf "   카메라 0: %.1f초\\n";
+              ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$OUTPUT_DIR"/cam1/blackbox_*640_${TIMESTAMP}.mp4 2>/dev/null | xargs printf "   카메라 1: %.1f초\\n";
+              exit 0' INT
         
         # 대기
         wait
         ;;
         
-    "dual-hd")
-        echo "듀얼 카메라 - HD 1280x720 블랙박스 시작..."
-        echo "전방: $OUTPUT_DIR/blackbox_cam0_hd_${TIMESTAMP}.yuv"
-        echo "후방: $OUTPUT_DIR/blackbox_cam1_hd_${TIMESTAMP}.yuv" 
-        echo " HD 듀얼 모드: CPU 사용률 ~25-30%"
-        echo "Ctrl+C로 두 카메라 동시 중단"
+    "dual-720p")
+        echo "🎬 듀얼 카메라 - 720p MP4 블랙박스 시작..."
+        echo "📁 전방: $OUTPUT_DIR/cam0/blackbox_cam0_720p_${TIMESTAMP}.mp4"
+        echo "📁 후방: $OUTPUT_DIR/cam1/blackbox_cam1_720p_${TIMESTAMP}.mp4" 
+        echo "🚀 30fps, 듀얼 H.264 인코딩"
+        echo "⏹️  Ctrl+C로 두 카메라 동시 중단"
+        echo "💡 직접 MP4로 저장"
         echo
         
-        # HD 듀얼 카메라
+        # 720p 듀얼 카메라 - 직접 MP4로 저장
         rpicam-vid --camera 0 --width 1280 --height 720 \
-            --codec yuv420 --output "$OUTPUT_DIR/blackbox_cam0_hd_${TIMESTAMP}.yuv" \
-            --timeout 0 --nopreview --framerate 30 --flush &
+            --timeout 0 --framerate 30 --nopreview --flush \
+            --output "$OUTPUT_DIR/cam0/blackbox_cam0_720p_${TIMESTAMP}.mp4" &
         CAM0_PID=$!
         
         rpicam-vid --camera 1 --width 1280 --height 720 \
-            --codec yuv420 --output "$OUTPUT_DIR/blackbox_cam1_hd_${TIMESTAMP}.yuv" \
-            --timeout 0 --nopreview --framerate 30 --flush &
+            --timeout 0 --framerate 30 --nopreview --flush \
+            --output "$OUTPUT_DIR/cam1/blackbox_cam1_720p_${TIMESTAMP}.mp4" &
         CAM1_PID=$!
         
-        echo "✅ 카메라 0 (전방) HD PID: $CAM0_PID"  
-        echo "✅ 카메라 1 (후방) HD PID: $CAM1_PID"
+        echo "✅ 카메라 0 (전방) 720p PID: $CAM0_PID"  
+        echo "✅ 카메라 1 (후방) 720p PID: $CAM1_PID"
         echo
         echo "🛑 중단하려면 Ctrl+C 누르세요..."
         
-        trap 'echo ""; echo "⏹️  듀얼 HD 녹화 중단 중..."; kill $CAM0_PID $CAM1_PID 2>/dev/null; wait; echo "✅ 듀얼 HD 녹화 완료"; exit 0' INT
+        trap 'echo ""; echo "⏹️  듀얼 720p 녹화 중단 중..."; 
+              echo "   📝 정상 종료 신호 전송 중...";
+              kill -INT $CAM0_PID $CAM1_PID 2>/dev/null; 
+              echo "   ⏳ MP4 파일 마무리 중... (3초 대기)";
+              sleep 3;
+              if kill -0 $CAM0_PID 2>/dev/null || kill -0 $CAM1_PID 2>/dev/null; then
+                  echo "   ⚠️  강제 종료 실행";
+                  kill -TERM $CAM0_PID $CAM1_PID 2>/dev/null;
+                  sleep 1;
+                  kill -9 $CAM0_PID $CAM1_PID 2>/dev/null;
+              fi;
+              wait;
+              echo "✅ 듀얼 720p 녹화 완료"; 
+              echo "📁 저장된 파일:";
+              ls -lah "$OUTPUT_DIR"/cam0/blackbox_*720p_${TIMESTAMP}.mp4 2>/dev/null;
+              ls -lah "$OUTPUT_DIR"/cam1/blackbox_*720p_${TIMESTAMP}.mp4 2>/dev/null;
+              echo "🎬 영상 정보:";
+              ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$OUTPUT_DIR"/cam0/blackbox_*720p_${TIMESTAMP}.mp4 2>/dev/null | xargs printf "   카메라 0: %.1f초\\n";
+              ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$OUTPUT_DIR"/cam1/blackbox_*720p_${TIMESTAMP}.mp4 2>/dev/null | xargs printf "   카메라 1: %.1f초\\n";
+              exit 0' INT
+        
+        wait
+        ;;
+
+    "dual-1080p")
+        echo "🎬 듀얼 카메라 - 1080p MP4 블랙박스 시작..."
+        echo "📁 전방: $OUTPUT_DIR/cam0/blackbox_cam0_1080p_${TIMESTAMP}.mp4"
+        echo "📁 후방: $OUTPUT_DIR/cam1/blackbox_cam1_1080p_${TIMESTAMP}.mp4" 
+        echo "🚀 30fps, 듀얼 H.264 인코딩"
+        echo "⏹️  Ctrl+C로 두 카메라 동시 중단"
+        echo "💡 직접 MP4로 저장"
+        echo
+        
+        # 1080p 듀얼 카메라 - 직접 MP4로 저장
+        rpicam-vid --camera 0 --width 1920 --height 1080 \
+            --timeout 0 --framerate 30 --nopreview --flush \
+            --output "$OUTPUT_DIR/cam0/blackbox_cam0_1080p_${TIMESTAMP}.mp4" &
+        CAM0_PID=$!
+        
+        rpicam-vid --camera 1 --width 1920 --height 1080 \
+            --timeout 0 --framerate 30 --nopreview --flush \
+            --output "$OUTPUT_DIR/cam1/blackbox_cam1_1080p_${TIMESTAMP}.mp4" &
+        CAM1_PID=$!
+        
+        echo "✅ 카메라 0 (전방) 1080p PID: $CAM0_PID"  
+        echo "✅ 카메라 1 (후방) 1080p PID: $CAM1_PID"
+        echo
+        echo "🛑 중단하려면 Ctrl+C 누르세요..."
+        
+        trap 'echo ""; echo "⏹️  듀얼 1080p 녹화 중단 중..."; 
+              echo "   📝 정상 종료 신호 전송 중...";
+              kill -INT $CAM0_PID $CAM1_PID 2>/dev/null; 
+              echo "   ⏳ MP4 파일 마무리 중... (3초 대기)";
+              sleep 3;
+              if kill -0 $CAM0_PID 2>/dev/null || kill -0 $CAM1_PID 2>/dev/null; then
+                  echo "   ⚠️  강제 종료 실행";
+                  kill -TERM $CAM0_PID $CAM1_PID 2>/dev/null;
+                  sleep 1;
+                  kill -9 $CAM0_PID $CAM1_PID 2>/dev/null;
+              fi;
+              wait;
+              echo "✅ 듀얼 1080p 녹화 완료"; 
+              echo "📁 저장된 파일:";
+              ls -lah "$OUTPUT_DIR"/cam0/blackbox_*1080p_${TIMESTAMP}.mp4 2>/dev/null;
+              ls -lah "$OUTPUT_DIR"/cam1/blackbox_*1080p_${TIMESTAMP}.mp4 2>/dev/null;
+              echo "🎬 영상 정보:";
+              ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$OUTPUT_DIR"/cam0/blackbox_*1080p_${TIMESTAMP}.mp4 2>/dev/null | xargs printf "   카메라 0: %.1f초\\n";
+              ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$OUTPUT_DIR"/cam1/blackbox_*1080p_${TIMESTAMP}.mp4 2>/dev/null | xargs printf "   카메라 1: %.1f초\\n";
+              exit 0' INT
         
         wait
         ;;
         
-    "optimized"|"mmap")
-        echo "mmap 최적화 블랙박스 시작 (카메라 0번)..."
-        echo "파일: $OUTPUT_DIR/blackbox_optimized_${TIMESTAMP}.yuv"
-        echo "CPU 사용률: ~3-5% (최고 효율성)"
-        echo "mmap 메모리 맵 I/O 사용"
+    "stream")
+        echo "🌐 실시간 MJPEG 스트리밍 서버 시작..."
+        echo "📡 포트: 8080"
+        echo "🌍 접속 URL: http://localhost:8080/"
+        echo "📷 카메라: 0번, 640x480, 30fps"
+        echo "⏹️  Ctrl+C로 서버 중단"
         echo
         
-        # 최적화 시스템 빌드 확인
-        if [ ! -f "build/optimized_capture" ]; then
-            echo "🔨 최적화 시스템 빌드 중..."
-            cd build
-            make -f Makefile.optimized optimized_capture >/dev/null 2>&1
-            cd ..
+        # 스트리밍 서버 빌드 및 실행
+        cd src/streaming
+        if [ ! -f "test_streaming" ]; then
+            echo "🔨 스트리밍 서버 빌드 중..."
+            make >/dev/null 2>&1
         fi
         
-        if [ -f "build/optimized_capture" ]; then
-            echo "⚠️  현재 최적화 캡처는 벤치마크 모드입니다"
-            echo "📹 카메라 0번 640x480 모드로 실행..."
-            
-            rpicam-vid --camera 0 --width 640 --height 480 \
-                --codec yuv420 --output "$OUTPUT_DIR/blackbox_optimized_${TIMESTAMP}.yuv" \
-                --timeout 0 --nopreview --framerate 30 --flush
+        if [ -f "test_streaming" ]; then
+            echo "✅ 스트리밍 서버 실행 중..."
+            ./test_streaming
         else
-            echo "❌ 최적화 시스템 빌드 실패. 일반 모드로 실행..."
-            rpicam-vid --camera 0 --width 640 --height 480 \
-                --codec yuv420 --output "$OUTPUT_DIR/blackbox_optimized_${TIMESTAMP}.yuv" \
-                --timeout 0 --nopreview --framerate 30 --flush
+            echo "❌ 스트리밍 서버 빌드 실패"
+            exit 1
         fi
+        ;;
+        
+    "quick")
+        echo "⚡ 3초 듀얼 카메라 테스트 시작..."
+        echo "📁 640x480 해상도로 빠른 테스트"
+        echo
+        
+        cd src/core
+        make compare-cameras
+        cd ../..
+        
+        echo "✅ 빠른 테스트 완료!"
+        echo "📁 결과 파일:"
+        ls -lah videos/640x480/cam*/compare_*.mp4 2>/dev/null
+        ;;
+        
+    "demo")
+        echo "🎯 10초 모든 해상도 데모 시작..."
+        echo "📹 640x480, 720p, 1080p 순서로 데모 진행"
+        echo
+        
+        cd src/core
+        echo "1️⃣ 640x480 테스트..."
+        make video-10sec-640x480
+        
+        echo "2️⃣ 720p 테스트..."  
+        make video-10sec-720p
+        
+        echo "3️⃣ 1080p 테스트..."
+        make video-10sec-1080p
+        
+        echo "📊 최종 결과:"
+        make list-videos
+        cd ../..
         ;;
         
     *)
@@ -198,25 +372,20 @@ case $MODE in
         ;;
 esac
 
-echo
-echo "✅ 블랙박스 녹화 완료!"
-echo "📁 파일 위치: $(pwd)/$OUTPUT_DIR"
-echo "📋 생성된 파일:"
-ls -lh "$OUTPUT_DIR"/blackbox_*${TIMESTAMP}* 2>/dev/null
-
-echo
-echo "🎬 MP4 변환 방법 (재생용):"
-echo "----------------------------------------"
-for file in "$OUTPUT_DIR"/blackbox_*${TIMESTAMP}*.yuv; do
-    if [ -f "$file" ]; then
-        base_name=$(basename "$file" .yuv)
-        if [[ "$file" == *"hd"* ]]; then
-            echo "# HD 해상도 변환:"
-            echo "ffmpeg -f rawvideo -pix_fmt yuv420p -video_size 1280x720 -r 30 -i $file -c:v libx264 -preset fast -crf 20 $OUTPUT_DIR/${base_name}.mp4 -y"
-        else
-            echo "# 640x480 해상도 변환:"
-            echo "ffmpeg -f rawvideo -pix_fmt yuv420p -video_size 640x480 -r 30 -i $file -c:v libx264 -preset fast -crf 20 $OUTPUT_DIR/${base_name}.mp4 -y"
-        fi
-        echo
-    fi
-done
+# 녹화 완료 처리 (스트리밍/테스트 모드가 아닌 경우)
+if [[ "$MODE" != "stream" && "$MODE" != "quick" && "$MODE" != "demo" ]]; then
+    echo
+    echo "✅ 블랙박스 녹화 완료!"
+    echo "📁 파일 위치: $(pwd)/$OUTPUT_DIR/"
+    echo "📋 생성된 파일:"
+    ls -lh "$OUTPUT_DIR"/cam*/blackbox_*${TIMESTAMP}*.mp4 2>/dev/null
+    
+    echo
+    echo "🎬 재생 방법:"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "VLC 미디어 플레이어나 기본 동영상 플레이어로 MP4 파일을 직접 재생할 수 있습니다."
+    echo
+    echo "📊 전체 비디오 목록 보기:"
+    echo "  cd src/core && make list-videos"
+    echo
+fi
