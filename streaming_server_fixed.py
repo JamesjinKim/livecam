@@ -11,7 +11,6 @@ import signal
 from pathlib import Path
 from datetime import datetime
 from typing import Generator
-import threading
 import time
 from contextlib import asynccontextmanager
 import uvicorn
@@ -43,7 +42,7 @@ class FixedMJPEGStreamer:
         if self.is_streaming:
             return
             
-        # 더 안정적인 rpicam-vid 명령 (녹화 지원)
+        # CPU 최적화된 rpicam-vid 명령 (1단계 최적화)
         cmd = [
             "rpicam-vid",
             "--camera", str(self.camera_id),
@@ -52,13 +51,13 @@ class FixedMJPEGStreamer:
             "--timeout", "0",
             "--nopreview",
             "--codec", "mjpeg",
-            "--quality", "85",
-            "--framerate", "25", 
+            "--quality", "70",        # 85→70 (CPU 절약)
+            "--framerate", "20",      # 25→20 (CPU 절약)
             "--bitrate", "0",
-            "--denoise", "cdn_off",
-            "--sharpness", "1.0",
+            "--denoise", "off",       # 노이즈 제거 비활성화
+            "--sharpness", "0.8",     # 셰이프니스 감소
             "--contrast", "1.0",
-            "--saturation", "1.0",
+            "--saturation", "0.9",    # 채도 약간 감소
             "--ev", "0",
             "--awb", "auto", 
             "--metering", "centre",
@@ -77,7 +76,7 @@ class FixedMJPEGStreamer:
         print(f"✅ Camera {self.camera_id} streaming started (PID: {self.process.pid})")
         
     def get_fixed_frames(self) -> Generator[bytes, None, None]:
-        """수정된 MJPEG 프레임 생성기"""
+        """최적화된 MJPEG 프레임 생성기 (2단계 최적화)"""
         if not self.is_streaming or not self.process:
             print(f"Starting stream for camera {self.camera_id}")
             self.start_stream()
@@ -87,54 +86,85 @@ class FixedMJPEGStreamer:
             print(f"Process failed for camera {self.camera_id}")
             return
             
-        buffer = bytearray()
+        # 최적화된 버퍼 관리
+        buffer = bytearray(65536)  # 사전 할당된 64KB 버퍼
+        buffer_pos = 0
         frame_count = 0
+        
+        # 프레임 헤더 캐싱 (GC 압박 감소)
+        header_template = (
+            b'--frame\r\n'
+            b'Content-Type: image/jpeg\r\n'
+            b'Content-Length: '
+        )
+        header_suffix = b'\r\n\r\n'
+        frame_suffix = b'\r\n'
         
         try:
             while self.is_streaming and self.process and self.process.poll() is None:
-                # 데이터 읽기
-                chunk = self.process.stdout.read(16384)  # 16KB 청크
+                # 최적화된 청크 읽기 (더 큰 청크로 시스템 콜 감소)
+                chunk = self.process.stdout.read(32768)  # 32KB 청크 (2배 증가)
                 if not chunk:
                     print(f"No data from camera {self.camera_id}")
-                    time.sleep(0.1)
+                    time.sleep(0.05)  # 대기 시간 절반으로 감소
                     continue
-                    
-                buffer.extend(chunk)
                 
-                # 프레임 추출
-                while True:
-                    start_idx = buffer.find(b'\xff\xd8')
+                # 버퍼 공간 확인 및 확장
+                if buffer_pos + len(chunk) > len(buffer):
+                    # 버퍼 크기 동적 조정
+                    buffer.extend(b'\x00' * (buffer_pos + len(chunk) - len(buffer)))
+                
+                # 메모리 복사 최적화
+                buffer[buffer_pos:buffer_pos + len(chunk)] = chunk
+                buffer_pos += len(chunk)
+                
+                # 프레임 추출 (최적화된 검색)
+                search_start = 0
+                while search_start < buffer_pos:
+                    # JPEG 시작 마커 찾기 (memoryview 사용으로 복사 방지)
+                    buffer_view = memoryview(buffer)
+                    start_idx = buffer_view[search_start:buffer_pos].tobytes().find(b'\xff\xd8')
                     if start_idx == -1:
-                        # 버퍼 크기 제한
-                        if len(buffer) > 100000:
-                            buffer = buffer[-50000:]
                         break
+                    start_idx += search_start
                         
-                    end_idx = buffer.find(b'\xff\xd9', start_idx + 2)
+                    # 끝 마커 찾기
+                    end_idx = buffer_view[start_idx + 2:buffer_pos].tobytes().find(b'\xff\xd9')
                     if end_idx == -1:
-                        if len(buffer) > 200000:  # 200KB 제한
-                            buffer = buffer[start_idx:]
-                            if len(buffer) > 100000:
-                                buffer = buffer[:100000]
+                        # 버퍼 정리 (시작점 이후만 유지)
+                        if buffer_pos > 131072:  # 128KB 초과시
+                            remaining = buffer_pos - start_idx
+                            buffer[0:remaining] = buffer[start_idx:buffer_pos]
+                            buffer_pos = remaining
                         break
+                    end_idx += start_idx + 2
                         
-                    # 완전한 프레임 추출
-                    frame = bytes(buffer[start_idx:end_idx + 2])
-                    buffer = buffer[end_idx + 2:]
-                    
-                    # 최소 프레임 크기 체크
-                    if len(frame) < 1024:  # 1KB 미만은 스킵
+                    # 완전한 프레임 추출 (bytes 복사 최소화)
+                    frame_size = end_idx + 2 - start_idx
+                    if frame_size < 2048:  # 2KB 미만은 스킵 (더 엄격한 필터)
+                        search_start = end_idx + 2
                         continue
                         
+                    frame = bytes(buffer[start_idx:end_idx + 2])
                     frame_count += 1
                     
-                    # MJPEG 멀티파트 응답 생성
-                    yield (
-                        b'--frame\r\n'
-                        b'Content-Type: image/jpeg\r\n'
-                        b'Content-Length: ' + str(len(frame)).encode() + b'\r\n'
-                        b'\r\n' + frame + b'\r\n'
-                    )
+                    # 최적화된 HTTP 응답 생성 (문자열 연산 최소화)
+                    frame_len_bytes = str(frame_size).encode('ascii')
+                    
+                    yield (header_template + frame_len_bytes + header_suffix + frame + frame_suffix)
+                    
+                    search_start = end_idx + 2
+                
+                # 처리된 데이터 제거 (버퍼 압축)
+                if search_start > 0:
+                    remaining = buffer_pos - search_start
+                    if remaining > 0:
+                        buffer[0:remaining] = buffer[search_start:buffer_pos]
+                    buffer_pos = remaining
+                
+                # CPU 사용률 제한 (더 적은 sleep)
+                if frame_count % 20 == 0:  # 20프레임마다 (기존 10에서 변경)
+                    time.sleep(0.001)  # 1ms
                     
         except Exception as e:
             print(f"Error in camera {self.camera_id}: {e}")
@@ -328,7 +358,7 @@ async def root():
                         <button class="stop" onclick="stopRecording(0)">⏹️ Stop</button>
                         <button onclick="reconnect(0)">🔄 Reconnect</button>
                     </div>
-                    <div class="info">640×480 @ 25fps | MJPEG 85% Quality</div>
+                    <div class="info">640×480 @ 20fps | MJPEG 70% Quality (CPU 최적화)</div>
                 </div>
                 
                 <div class="camera-box">
@@ -345,7 +375,7 @@ async def root():
                         <button class="stop" onclick="stopRecording(1)">⏹️ Stop</button>
                         <button onclick="reconnect(1)">🔄 Reconnect</button>
                     </div>
-                    <div class="info">640×480 @ 25fps | MJPEG 85% Quality</div>
+                    <div class="info">640×480 @ 20fps | MJPEG 70% Quality (CPU 최적화)</div>
                 </div>
             </div>
         </div>

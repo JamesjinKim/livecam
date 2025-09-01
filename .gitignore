@@ -77,4 +77,4 @@ Makefile.cmake
 # Backup files
 *.bak
 *.backup
-Makefile.old
+Makefile.oldvenv/

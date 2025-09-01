@@ -232,13 +232,3 @@ sudo systemctl start blackbox
 - UPS 사용 권장 (전원 안정성)
 
 ---
-
-## 📞 도움이 필요하신가요?
-
-- **기술 문서**: [CLAUDE.md](./CLAUDE.md)
-- **제품 사양**: [PRD.md](./PRD.md)  
-- **상세 가이드**: [README.md](./README.md)
-
----
-
-**🎉 축하합니다! 이제 산업용 CCTV 블랙박스를 사용할 준비가 되었습니다!**
