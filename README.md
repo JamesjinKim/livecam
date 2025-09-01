@@ -61,8 +61,9 @@ cd ~/livecam
 
 ### 🌐 스트리밍 모드
 ```bash
-./start_blackbox.sh stream        # 실시간 MJPEG 웹 스트리밍 (포트 8080)
-# 브라우저에서 http://라즈베리파이IP:8080/ 접속
+# 개선된 안정적 스트리밍 서버 (화면 깨짐 문제 해결)
+source venv/bin/activate && python streaming_server_fixed.py
+# 브라우저에서 http://라즈베리파이IP:8000/ 접속
 ```
 
 ### ⚡ 테스트 모드
@@ -138,21 +139,20 @@ sudo raspi-config
 
 ## 🔄 실시간 스트리밍
 
+**화면 깨짐 문제 해결됨** - 개선된 스트리밍 서버 사용
+
 ### 웹 스트리밍 서버 시작
 ```bash
-./start_blackbox.sh stream
+source venv/bin/activate && python streaming_server_fixed.py
 ```
 
 ### 접속 방법
-- **웹 브라우저**: `http://라즈베리파이IP:8080/`
-- **VLC 플레이어**: 네트워크 스트림으로 URL 입력
-- **Python OpenCV**: `cv2.VideoCapture("http://IP:8080/")`
+- **웹 브라우저**: `http://라즈베리파이IP:8000/`
 
-### 스트리밍 특징
-- **MJPEG HTTP 스트리밍** (웹 브라우저 호환)
-- **최대 10개 클라이언트** 동시 접속
-- **640x480 @ 30fps** 실시간 전송
-- **적응형 품질 제어**
+### 주요 개선사항
+- **프레임 무결성 보장**: JPEG 마커 기준 안전한 버퍼 처리로 화면 깨짐 완전 해결
+- **메모리 최적화**: 200KB 최대 버퍼 사용
+- **안정적 품질**: 640x480@25fps, MJPEG 85%
 
 ## 🛠️ 문제 해결
 
@@ -174,6 +174,21 @@ chmod +x start_blackbox.sh
 sudo usermod -a -G video $USER
 ```
 
+### 🌐 스트리밍 문제 해결
+
+#### 화면 깨짐 현상
+```bash
+# 개선된 서버 사용 (화면 깨짐 문제 해결됨)
+source venv/bin/activate && python streaming_server_fixed.py
+```
+
+#### 의존성 설치
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install fastapi uvicorn
+```
+
 ### 저장 공간 부족
 ```bash
 # 공간 확인
@@ -188,19 +203,22 @@ find videos/ -name "*.mp4" -mtime +7 -delete
 ### 프로젝트 구조
 ```
 livecam/
-├── README.md              # 사용자 가이드
-├── start_blackbox.sh      # 메인 실행 스크립트 ⭐
-├── src/
-│   ├── core/             # 카메라 캡처 시스템
-│   ├── streaming/        # 실시간 스트리밍 서버
-│   └── legacy/          # 실험적 구현
-└── videos/              # 영상 저장 디렉토리
+├── README.md                    # 사용자 가이드
+├── CLAUDE.md                    # 개발자 기술 문서  
+├── start_blackbox.sh           # 블랙박스 녹화 스크립트 ⭐
+├── streaming_server_fixed.py   # 안정화된 스트리밍 서버 ⭐
+├── venv/                       # Python 가상환경
+├── src/                        # C++ 소스 (실험적)
+├── scripts/                    # 유틸리티 스크립트
+└── videos/                     # 영상 저장 디렉토리
+    ├── 640x480/               # 기본 해상도
+    ├── 1280x720/              # HD 해상도  
+    └── 1920x1080/             # 풀HD 해상도
 ```
 
 ### 핵심 시스템
-- **`src/core/`**: RpiCameraCapture 기반 듀얼 카메라 시스템
-- **`src/streaming/`**: MJPEG HTTP 스트리밍 서버
-- **`start_blackbox.sh`**: 통합 실행 스크립트 (메인)
+- **`start_blackbox.sh`**: 듀얼 카메라 블랙박스 녹화 (메인)
+- **`streaming_server_fixed.py`**: 화면 깨짐 해결된 웹 스트리밍
 
 ## 📞 지원
 
@@ -210,4 +228,9 @@ livecam/
 
 ---
 
-**🎬 라즈베리파이 5로 전문가급 블랙박스를 경험해보세요!**
+
+● MP4 저장과 스트리밍의 관계
+
+  두 가지 독립적 파이프라인:
+  1. 녹화 파이프라인: rpicam-vid → H.264 인코딩 → MP4 파일 저장
+  2. 스트리밍 파이프라인: rpicam-vid → MJPEG/H.264 → HTTP 스트림
