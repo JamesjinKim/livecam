@@ -77,4 +77,7 @@ Makefile.cmake
 # Backup files
 *.bak
 *.backup
-Makefile.oldvenv/
+Makefile.old
+
+# Python virtual environment
+venv/
