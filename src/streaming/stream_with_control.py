@@ -169,6 +169,10 @@ class StableStreamer:
         self.min_frame_size = 1024  # 최소 프레임 크기
         self.max_frame_size = 256 * 1024  # 최대 프레임 크기
         
+        # 프레임 타이밍
+        self.min_frame_interval = 1.0 / 30.0  # 30fps 기준 최소 간격
+        self.last_successful_frame = 0.0
+        
         # 약한 참조로 순환 참조 방지
         self._weak_self = weakref.ref(self)
     
@@ -185,10 +189,10 @@ class StableStreamer:
                 "--width", "640", "--height", "480",
                 "--timeout", "0", "--nopreview",
                 "--codec", "mjpeg",
-                "--quality", "75",  # CPU 부하 감소를 위해 약간 하향 (80% → 75%)
-                "--framerate", "25",  # 안정성 우선 (30fps → 25fps)
+                "--quality", "80",  # 원래 품질로 복원
+                "--framerate", "30",  # 원래 프레임레이트로 복원
                 "--bitrate", "0",
-                "--denoise", "cdn_off",  # CPU 부하 최소화
+                "--denoise", "cdn_fast",  # 안전한 디노이징 설정
                 "--buffer-count", "4",  # 버퍼 최적화
                 "--flush", "1",
                 "--inline",  # 스트리밍 안정성 향상
@@ -247,8 +251,8 @@ class StableStreamer:
         self.buffer_pos = 0
         
         # 상수 (끌김 방지 최적화)
-        CHUNK_SIZE = 16384  # 16KB 청크로 안정성 향상
-        MIN_FRAME_INTERVAL = 1.0 / 25.0  # 25fps 기준 최소 간격
+        CHUNK_SIZE = 65536  # 64KB 청크로 증가 (끊김 방지)
+        MIN_FRAME_INTERVAL = 1.0 / 30.0  # 30fps 기준 최소 간격
         frame_drop_prevention_time = time.time()
         last_successful_frame = time.time()
         
@@ -349,13 +353,13 @@ class StableStreamer:
                 
                 # HTTP 멀티파트 응답 (끌김 방지 최적화)
                 frame_time = time.time()
-                if frame_time - last_successful_frame >= MIN_FRAME_INTERVAL:
+                if frame_time - self.last_successful_frame >= self.min_frame_interval:
                     yield b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: '
                     yield str(frame_size).encode()
                     yield b'\r\n\r\n'
                     yield frame
                     yield b'\r\n'
-                    last_successful_frame = frame_time
+                    self.last_successful_frame = frame_time
                     self.frame_count += 1
                 
                 self.frame_count += 1
@@ -1259,4 +1263,4 @@ if __name__ == "__main__":
     except PermissionError:
         pass
     
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+    uvicorn.run(app, host="192.168.0.34", port=8000, log_level="warning")
