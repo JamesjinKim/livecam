@@ -81,3 +81,6 @@ Makefile.old
 
 # Python virtual environment
 venv/
+
+# Camera stream temp files
+streams/

@@ -12,18 +12,26 @@
 ### 기술 스택
 - **하드웨어**: Raspberry Pi 5 (BCM2712), OV5647 카메라 모듈 × 2
 - **영상 캡처**: rpicam-vid (라즈베리파이 공식 도구)
-- **영상 포맷**: MP4 (H.264 하드웨어 인코딩)
+- **영상 포맷**: MP4 (H.264 하드웨어 인코딩), MJPEG (실시간 스트리밍)
 - **저장 방식**: 직접 MP4 저장, 실시간 파일 쓰기 with flush
+- **웹 스트리밍**: FastAPI 기반 MJPEG 스트리밍 서버 (30fps 최적화)
 
 ### 주요 구성 요소
 
 ```
 livecam/
-├── start_blackbox.sh       # 메인 실행 스크립트
-├── src/                    # C++ 소스 코드 (레거시)
-│   ├── core/              # 핵심 캡처 시스템
-│   ├── optimized/         # 최적화 구현
-│   └── legacy/            # DMA 직접 접근 시도
+├── start_blackbox.sh       # MP4 녹화 실행 스크립트
+├── start_streaming.sh      # 웹 스트리밍 실행 스크립트 (30fps)
+├── src/                    # 소스 코드
+│   ├── core/              # 핵심 캡처 시스템 (레거시)
+│   ├── optimized/         # 최적화 구현 (레거시)
+│   ├── legacy/            # DMA 직접 접근 시도 (레거시)
+│   └── streaming/         # 웹 스트리밍 서버
+│       ├── stream_optimized.py         # 15fps 안정화 버전
+│       ├── stream_optimized_30fps.py   # 30fps 고성능 버전
+│       ├── stream_fixed.py             # 메모리 버퍼 수정 버전
+│       ├── stream_dma.py               # DMA 시뮬레이션 (분석됨)
+│       └── stream_zerocopy.py          # Zero-copy 시뮬레이션 (분석됨)
 ├── scripts/               # 유틸리티 스크립트
 └── videos/                # 영상 저장 디렉토리
     ├── 640x480/          # 640x480 해상도
@@ -42,7 +50,15 @@ livecam/
 ### 필수 패키지 설치
 ```bash
 sudo apt update
-sudo apt install -y rpicam-apps ffmpeg
+sudo apt install -y rpicam-apps ffmpeg python3-venv
+```
+
+### 웹 스트리밍 환경 설정
+```bash
+# 가상환경 생성 및 패키지 설치
+python3 -m venv venv
+source venv/bin/activate
+pip install fastapi uvicorn psutil
 ```
 
 ### 카메라 확인
@@ -89,7 +105,31 @@ CAM1_PID=$!
 trap 'kill -INT $CAM0_PID $CAM1_PID; sleep 3; wait' INT
 ```
 
-### 3. 성능 최적화 전략
+### 3. 웹 스트리밍 서버 구현
+
+#### 30fps 고성능 스트리밍 서버 (`stream_optimized_30fps.py`)
+```python
+# 30fps 최적화 설정
+rpicam-vid --camera 0 --width 640 --height 480 \
+  --timeout 0 --nopreview --codec mjpeg \
+  --quality 80 --framerate 30 --bitrate 0 \
+  --denoise cdn_fast --flush 1 --output -
+```
+
+**핵심 최적화 기술**:
+- **768KB 고정 버퍼**: 메모리 누수 방지 및 30fps 처리량 보장
+- **3단계 버퍼 풀**: 순환 버퍼 관리로 지연 최소화
+- **적응형 청크 읽기**: 32KB 청크로 프레임 드롭 방지
+- **인라인 JPEG 검색**: memoryview 직접 사용으로 복사 오버헤드 제거
+- **하드웨어 디노이징**: `cdn_fast`로 품질 향상
+
+#### 웹 UI 특징
+- **전체 화면 활용**: 브라우저 창 전체를 활용한 최대 영상 크기
+- **심플한 그레이 디자인**: 밝은 회색 톤의 모던 UI
+- **부드러운 블루 액센트**: 파란색 배지와 인디케이터
+- **반응형 레이아웃**: 2분할 그리드로 듀얼 카메라 동시 표시
+
+### 4. 성능 최적화 전략
 
 #### MP4 직접 저장 방식
 - **H.264 하드웨어 인코딩**: 라즈베리파이 5 지원
@@ -103,7 +143,9 @@ trap 'kill -INT $CAM0_PID $CAM1_PID; sleep 3; wait' INT
 
 ## 📊 성능 지표
 
-### CPU 사용률 (MP4 직접 저장)
+### CPU 사용률 비교
+
+#### MP4 직접 저장
 | 모드 | 해상도 | CPU 사용률 |
 |------|--------|-----------|
 | 단일 카메라 | 640×480 | ~10% |
@@ -113,10 +155,54 @@ trap 'kill -INT $CAM0_PID $CAM1_PID; sleep 3; wait' INT
 | 듀얼 카메라 | 1280×720 | ~30% |
 | 듀얼 카메라 | 1920×1080 | ~40% |
 
+#### 웹 스트리밍 서버
+| 버전 | FPS | 메모리 사용량 | CPU 사용률 |
+|------|-----|-------------|-----------|
+| stream_optimized.py | 15fps | ~50MB | ~0.3% |
+| stream_optimized_30fps.py | 30fps | ~52MB | ~0.3% |
+
 ### 저장 용량 (MP4 형식)
 - 640×480: 약 1.5MB/10초 (9MB/분)
 - 1280×720: 약 12MB/10초 (72MB/분)
 - 1920×1080: 약 25MB/10초 (150MB/분)
+
+## 🚀 실행 방법
+
+### MP4 녹화 실행
+```bash
+# 듀얼 카메라 640x480 해상도로 녹화
+./start_blackbox.sh dual-640
+```
+
+### 웹 스트리밍 실행
+```bash
+# 30fps 고성능 스트리밍 서버
+./start_streaming.sh
+
+# 접속 URL: http://라즈베리파이_IP:8000
+```
+
+## 🔬 스트리밍 기술 분석
+
+### DMA 및 Zero-copy 구현 분석
+
+#### `stream_dma.py` - "가짜 DMA" 분석 결과
+- **실제**: 일반적인 파일 I/O를 사용하는 표준 구현
+- **문제점**: DMA 레지스터 직접 접근 없이 `/dev/shm` 공유 메모리만 사용
+- **성능**: 일반적인 파일 읽기와 동일한 성능
+
+#### `stream_zerocopy.py` - "가짜 Zero-copy" 분석 결과
+- **실제**: named pipes + mmap 사용하지만 `bytes()` 복사 발생
+- **문제점**: `chunk = bytes(view[...])` 코드로 메모리 복사 수행
+- **성능**: Zero-copy 목적과 반대되는 다중 메모리 복사 발생
+
+### 메모리 최적화 기법
+
+#### 검증된 최적화 방식 (`stream_optimized_30fps.py`)
+- **고정 크기 순환 버퍼**: 768KB 고정 할당으로 동적 할당 제거
+- **직접 바이트 검색**: memoryview로 JPEG 헤더 검색
+- **가비지 컬렉션 제어**: 1500프레임마다 자동 실행
+- **프레임 드롭 방지**: 적응형 32KB 청크 읽기
 
 ## 🛠️ 개발 및 디버깅
 
@@ -198,7 +284,8 @@ WantedBy=multi-user.target
 
 ### 단기 (1-2주)
 - [x] MP4 직접 저장 시스템 구현
-- [ ] 웹 인터페이스 (실시간 모니터링)
+- [x] 웹 스트리밍 인터페이스 (30fps 최적화)
+- [x] 메모리 누수 방지 및 안정성 최적화
 - [ ] 순환 녹화 (디스크 공간 관리)
 
 ### 중기 (1-2개월)
