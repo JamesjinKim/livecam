@@ -178,19 +178,20 @@ class StableStreamer:
             return
         
         with self.client_lock:
-            # 부드러운 스트리밍 최적화 설정
+            # 부드러운 스트리밍 최적화 설정 (시스템 부하 고려)
             cmd = [
                 "rpicam-vid",
                 "--camera", str(self.camera_id),
                 "--width", "640", "--height", "480",
                 "--timeout", "0", "--nopreview",
                 "--codec", "mjpeg",
-                "--quality", "80",  # 화질 향상 (75% → 80%)
-                "--framerate", "30",  # 부드러운 30fps
+                "--quality", "75",  # CPU 부하 감소를 위해 약간 하향 (80% → 75%)
+                "--framerate", "25",  # 안정성 우선 (30fps → 25fps)
                 "--bitrate", "0",
-                "--denoise", "cdn_fast",  # 가벼운 디노이징으로 품질 개선
-                "--sharpness", "1.0",  # 선명도 향상
+                "--denoise", "cdn_off",  # CPU 부하 최소화
+                "--buffer-count", "4",  # 버퍼 최적화
                 "--flush", "1",
+                "--inline",  # 스트리밍 안정성 향상
                 "--output", "-"
             ]
             
@@ -245,9 +246,11 @@ class StableStreamer:
         
         self.buffer_pos = 0
         
-        # 상수 (성능 최적화)
-        CHUNK_SIZE = 32768  # 32KB 청크로 처리량 향상
+        # 상수 (끌김 방지 최적화)
+        CHUNK_SIZE = 16384  # 16KB 청크로 안정성 향상
+        MIN_FRAME_INTERVAL = 1.0 / 25.0  # 25fps 기준 최소 간격
         frame_drop_prevention_time = time.time()
+        last_successful_frame = time.time()
         
         try:
             while self.is_streaming and self.process and self.process.poll() is None:
@@ -268,8 +271,11 @@ class StableStreamer:
                 try:
                     chunk = self.process.stdout.read(CHUNK_SIZE)
                     if not chunk:
-                        time.sleep(0.005)  # 더 짧은 대기로 반응성 향상
+                        # 적응적 대기 - CPU 부하에 따라 조정
+                        wait_time = 0.01 if current_time - last_successful_frame > 0.1 else 0.005
+                        time.sleep(wait_time)
                         continue
+                    last_successful_frame = current_time
                 except (BrokenPipeError, OSError) as e:
                     print(f"❌ Camera {self.camera_id}: Pipe error - {e}")
                     break
@@ -341,12 +347,16 @@ class StableStreamer:
                 frame_view = self.current_buffer[start_idx:end_idx + 1]
                 frame = bytes(frame_view)  # 필요시에만 복사
                 
-                # HTTP 멀티파트 응답
-                yield b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: '
-                yield str(frame_size).encode()
-                yield b'\r\n\r\n'
-                yield frame
-                yield b'\r\n'
+                # HTTP 멀티파트 응답 (끌김 방지 최적화)
+                frame_time = time.time()
+                if frame_time - last_successful_frame >= MIN_FRAME_INTERVAL:
+                    yield b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: '
+                    yield str(frame_size).encode()
+                    yield b'\r\n\r\n'
+                    yield frame
+                    yield b'\r\n'
+                    last_successful_frame = frame_time
+                    self.frame_count += 1
                 
                 self.frame_count += 1
             
@@ -1001,14 +1011,14 @@ async def root():
                         <span class="video-title">📷 카메라 0 (전방)</span>
                         <span class="status-badge">LIVE</span>
                     </div>
-                    <img src="/stream/0" alt="Camera 0">
+                    <img src="/stream/0" alt="Camera 0" id="cam0Stream" onload="handleStreamLoad(0)" onerror="handleStreamError(0)">
                 </div>
                 <div class="video-container">
                     <div class="video-header">
                         <span class="video-title">📷 카메라 1 (후방)</span>
                         <span class="status-badge">LIVE</span>
                     </div>
-                    <img src="/stream/1" alt="Camera 1">
+                    <img src="/stream/1" alt="Camera 1" id="cam1Stream" onload="handleStreamLoad(1)" onerror="handleStreamError(1)">
                 </div>
             </div>
             
@@ -1163,10 +1173,53 @@ async def root():
                 systemInterval = setInterval(updateSystemInfo, 5000);
             }
             
+            // 스트리밍 끊김 방지 함수들
+            let streamRetryCount = { 0: 0, 1: 0 };
+            let lastStreamUpdate = { 0: Date.now(), 1: Date.now() };
+            
+            function handleStreamLoad(cameraId) {
+                streamRetryCount[cameraId] = 0;
+                lastStreamUpdate[cameraId] = Date.now();
+                console.log(`Camera ${cameraId} stream loaded successfully`);
+            }
+            
+            function handleStreamError(cameraId) {
+                streamRetryCount[cameraId]++;
+                console.log(`Camera ${cameraId} stream error, retry count: ${streamRetryCount[cameraId]}`);
+                
+                if (streamRetryCount[cameraId] < 5) {
+                    setTimeout(() => {
+                        const img = document.getElementById(`cam${cameraId}Stream`);
+                        if (img) {
+                            img.src = `/stream/${cameraId}?t=${Date.now()}`;
+                        }
+                    }, Math.min(1000 * streamRetryCount[cameraId], 5000));
+                }
+            }
+            
+            // 스트리밍 건강성 체크 (10초마다)
+            function checkStreamHealth() {
+                const now = Date.now();
+                [0, 1].forEach(cameraId => {
+                    const timeSinceUpdate = now - lastStreamUpdate[cameraId];
+                    if (timeSinceUpdate > 15000) { // 15초 이상 업데이트 없음
+                        console.log(`Camera ${cameraId} stream seems stuck, refreshing...`);
+                        const img = document.getElementById(`cam${cameraId}Stream`);
+                        if (img) {
+                            img.src = `/stream/${cameraId}?t=${now}`;
+                            lastStreamUpdate[cameraId] = now;
+                        }
+                    }
+                });
+            }
+            
             window.onbeforeunload = function() {
                 if (statusInterval) clearInterval(statusInterval);
                 if (systemInterval) clearInterval(systemInterval);
             }
+            
+            // 스트림 건강성 체크 시작
+            setInterval(checkStreamHealth, 10000);
         </script>
     </body>
     </html>
