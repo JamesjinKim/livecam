@@ -24,12 +24,6 @@ show_usage() {
     echo "  ./start_blackbox.sh dual-720p     # 두 카메라 동시 - 1280x720"
     echo "  ./start_blackbox.sh dual-1080p    # 두 카메라 동시 - 1920x1080"
     echo
-    echo "🌐 스트리밍 모드:"
-    echo "  ./start_blackbox.sh stream        # 실시간 MJPEG 웹 스트리밍 (포트 8080)"
-    echo
-    echo "⚡ 빠른 테스트:"
-    echo "  ./start_blackbox.sh quick         # 3초 듀얼 카메라 테스트 (640x480)"
-    echo "  ./start_blackbox.sh demo          # 10초 모든 해상도 데모"
     echo
 }
 
@@ -60,9 +54,6 @@ case $MODE in
         RES_WIDTH=1920
         RES_HEIGHT=1080
         ;;
-    stream|demo)
-        # 스트리밍/데모 모드는 별도 처리
-        ;;
     *)
         OUTPUT_DIR="videos/640x480"  # 기본값
         RES_WIDTH=640
@@ -71,17 +62,13 @@ case $MODE in
 esac
 
 # 카메라별 디렉토리 생성
-if [[ "$MODE" != "stream" ]]; then
-    mkdir -p "$OUTPUT_DIR/cam0"
-    mkdir -p "$OUTPUT_DIR/cam1"
-fi
+mkdir -p "$OUTPUT_DIR/cam0"
+mkdir -p "$OUTPUT_DIR/cam1"
 
 echo "🎬 블랙박스 모드: $MODE"
 echo "⏰ 시작 시간: $(date)"
-if [[ "$MODE" != "stream" && "$MODE" != "demo" ]]; then
-    echo "📁 저장 위치: $OUTPUT_DIR/"
-    echo "📺 해상도: ${RES_WIDTH}x${RES_HEIGHT}"
-fi
+echo "📁 저장 위치: $OUTPUT_DIR/"
+echo "📺 해상도: ${RES_WIDTH}x${RES_HEIGHT}"
 echo
 
 case $MODE in
@@ -307,63 +294,11 @@ case $MODE in
         wait
         ;;
         
-    "stream")
-        echo "🌐 실시간 MJPEG 스트리밍 서버 시작..."
-        echo "📡 포트: 8080"
-        echo "🌍 접속 URL: http://localhost:8080/"
-        echo "📷 카메라: 0번, 640x480, 30fps"
-        echo "⏹️  Ctrl+C로 서버 중단"
-        echo
+    # stream 모드 제거됨 - 필요한 파일이 없음
         
-        # 스트리밍 서버 빌드 및 실행
-        cd src/streaming
-        if [ ! -f "test_streaming" ]; then
-            echo "🔨 스트리밍 서버 빌드 중..."
-            make >/dev/null 2>&1
-        fi
+    # quick 모드 제거됨 - Makefile이 없음
         
-        if [ -f "test_streaming" ]; then
-            echo "✅ 스트리밍 서버 실행 중..."
-            ./test_streaming
-        else
-            echo "❌ 스트리밍 서버 빌드 실패"
-            exit 1
-        fi
-        ;;
-        
-    "quick")
-        echo "⚡ 3초 듀얼 카메라 테스트 시작..."
-        echo "📁 640x480 해상도로 빠른 테스트"
-        echo
-        
-        cd src/core
-        make compare-cameras
-        cd ../..
-        
-        echo "✅ 빠른 테스트 완료!"
-        echo "📁 결과 파일:"
-        ls -lah videos/640x480/cam*/compare_*.mp4 2>/dev/null
-        ;;
-        
-    "demo")
-        echo "🎯 10초 모든 해상도 데모 시작..."
-        echo "📹 640x480, 720p, 1080p 순서로 데모 진행"
-        echo
-        
-        cd src/core
-        echo "1️⃣ 640x480 테스트..."
-        make video-10sec-640x480
-        
-        echo "2️⃣ 720p 테스트..."  
-        make video-10sec-720p
-        
-        echo "3️⃣ 1080p 테스트..."
-        make video-10sec-1080p
-        
-        echo "📊 최종 결과:"
-        make list-videos
-        cd ../..
-        ;;
+    # demo 모드 제거됨 - Makefile이 없음
         
     *)
         echo "❌ 알 수 없는 모드: $MODE"
@@ -372,8 +307,8 @@ case $MODE in
         ;;
 esac
 
-# 녹화 완료 처리 (스트리밍/테스트 모드가 아닌 경우)
-if [[ "$MODE" != "stream" && "$MODE" != "quick" && "$MODE" != "demo" ]]; then
+# 녹화 완료 처리
+if [[ "$MODE" != "unused_mode" ]]; then
     echo
     echo "✅ 블랙박스 녹화 완료!"
     echo "📁 파일 위치: $(pwd)/$OUTPUT_DIR/"
@@ -385,7 +320,5 @@ if [[ "$MODE" != "stream" && "$MODE" != "quick" && "$MODE" != "demo" ]]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "VLC 미디어 플레이어나 기본 동영상 플레이어로 MP4 파일을 직접 재생할 수 있습니다."
     echo
-    echo "📊 전체 비디오 목록 보기:"
-    echo "  cd src/core && make list-videos"
     echo
 fi
