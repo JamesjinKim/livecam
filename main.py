@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-간단한 듀얼 카메라 토글 스트리밍 서버
+듀얼 카메라 토글 스트리밍 서버
 """
 
 import subprocess
@@ -216,7 +216,7 @@ async def root():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>🎥 듀얼 카메라 토글</title>
+        <title>듀얼 카메라 토글</title>
         <meta charset="UTF-8">
         <style>
             body { 
