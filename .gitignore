@@ -84,3 +84,18 @@ venv/
 
 # Camera stream temp files
 streams/
+
+# Motion detection video files (exclude ALL video files and folders)
+videos/
+motion_event_*.mp4
+concat_*.txt
+temp_*.h264
+*.mp4
+*.h264
+*.avi
+*.mov
+*.wmv
+
+# Python cache
+__pycache__/
+*.pyc

@@ -1,2 +1,0 @@
-file '/tmp/motion_buffer_50umv3h_/buffer_20250908_101332.h264'
-file '/home/shinho/shinho/livecam/videos/motion_events/cam1/250908/temp_post_20250908_101332.h264'
