@@ -319,15 +319,25 @@ async def root():
                 color: white;
                 border: 1px solid #28a745;
             }
-            .shutdown-btn {
+            .exit-btn {
                 background: #dc3545;
                 color: white;
                 border: 1px solid #dc3545;
                 font-weight: bold;
+                font-size: 14px;
+                padding: 10px 20px;
+                margin: 0 5px;
+                border-radius: 5px;
+                cursor: pointer;
+                transition: all 0.3s;
+                display: inline-block;
+                text-decoration: none;
             }
-            .shutdown-btn:hover {
+            .exit-btn:hover {
                 background: #c82333;
                 border: 1px solid #c82333;
+                color: white;
+                text-decoration: none;
             }
             .video-container {
                 margin: 20px 0;
@@ -425,9 +435,9 @@ async def root():
                 
                 <div class="control-section">
                     <h3>시스템 제어</h3>
-                    <button class="shutdown-btn" onclick="shutdownSystem()">
-                        🛑 서비스 종료
-                    </button>
+                    <a href="/exit" class="exit-btn">
+                        🛑 CCTV 종료
+                    </a>
                 </div>
             </div>
             
@@ -542,68 +552,12 @@ async def root():
                     });
             }
             
-            function shutdownSystem() {
-                if (confirm('🛑 서비스를 종료하시겠습니까?\n\n모든 카메라 스트림이 중지되고 서버가 종료됩니다.')) {
-                    document.getElementById('stream-status').textContent = '서비스 종료 중...';
-                    
-                    fetch('/api/shutdown', { method: 'POST' })
-                        .then(response => {
-                            if (response.ok) {
-                                alert('✅ 서비스가 정상 종료되었습니다.\n브라우저를 닫으셔도 됩니다.');
-                                document.body.innerHTML = '<div style="text-align:center;padding:50px;font-size:18px;">🛑 서비스 종료 완료<br><br>브라우저를 닫으셔도 됩니다.</div>';
-                            } else {
-                                throw new Error('서버 응답 오류');
-                            }
-                        })
-                        .catch(error => {
-                            console.error('Shutdown error:', error);
-                            alert('⚠️ 종료 요청 실패. 터미널에서 Ctrl+C로 종료해주세요.');
-                        });
-                }
-            }
-            
             // 스트림 오류 시 재시도
             document.getElementById('video-stream').onerror = function() {
-                console.log('Stream error occurred, retrying...');
                 setTimeout(() => {
                     this.src = `/stream?t=${Date.now()}`;
                 }, 2000);
             };
-            
-            // 스트림 로드 오류 처리 (423 Locked 등)
-            document.getElementById('video-stream').onload = function() {
-                document.getElementById('stream-status').style.display = 'block';
-            };
-            
-            // 스트림 연결 상태 체크
-            function checkStreamConnection() {
-                const img = document.getElementById('video-stream');
-                const status = document.getElementById('stream-status');
-                
-                if (img.complete && img.naturalHeight !== 0) {
-                    status.textContent = '스트리밍 중';
-                    status.style.color = '#28a745';
-                } else {
-                    // 423 에러 체크
-                    fetch('/stream', { method: 'HEAD' })
-                        .then(response => {
-                            if (response.status === 423) {
-                                status.textContent = '❌ 다른 사용자가 스트리밍 중입니다';
-                                status.style.color = '#dc3545';
-                            } else {
-                                status.textContent = '연결 대기 중';
-                                status.style.color = '#6c757d';
-                            }
-                        })
-                        .catch(() => {
-                            status.textContent = '연결 오류';
-                            status.style.color = '#dc3545';
-                        });
-                }
-            }
-            
-            // 3초마다 연결 상태 체크
-            setInterval(checkStreamConnection, 3000);
             
             // 페이지 로드 시 통계 업데이트 시작
             document.addEventListener('DOMContentLoaded', function() {
@@ -749,6 +703,79 @@ async def shutdown_system():
     threading.Thread(target=delayed_shutdown, daemon=True).start()
     
     return {"success": True, "message": "System shutting down..."}
+
+@app.get("/exit")
+async def exit_system():
+    """브라우저에서 /exit 접속 시 시스템 종료"""
+    print("🛑 Exit requested via /exit URL")
+    
+    # 종료 페이지 HTML 반환
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>CCTV 종료</title>
+        <meta charset="UTF-8">
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+            .container {
+                text-align: center;
+                background: white;
+                padding: 50px;
+                border-radius: 15px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            }
+            h1 {
+                color: #333;
+                margin-bottom: 20px;
+            }
+            .emoji {
+                font-size: 60px;
+                margin: 20px 0;
+            }
+            .message {
+                color: #666;
+                font-size: 18px;
+                line-height: 1.6;
+            }
+            .success {
+                color: #28a745;
+                font-weight: bold;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="emoji">🛑</div>
+            <h1>CCTV 서비스 종료 중...</h1>
+            <p class="message">
+                <span class="success">✅ CCTV 서비스가 안전하게 종료되었습니다.</span><br><br>
+                이제 모션 감지 시스템을 실행할 수 있습니다.<br>
+                브라우저를 닫으셔도 됩니다.
+            </p>
+        </div>
+        <script>
+            // 3초 후 서버 종료
+            setTimeout(() => {
+                fetch('/api/shutdown', { method: 'POST' })
+                    .catch(() => {
+                        // 서버가 종료되면 에러가 발생하는 것이 정상
+                    });
+            }, 1000);
+        </script>
+    </body>
+    </html>
+    """
+    
+    return HTMLResponse(content=html_content)
 
 @app.on_event("startup")
 async def startup_event():

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 통합 제어 시스템
-기존 토글 스트리밍 (main.py) + 새로운 듀얼 모션 블랙박스 (motion_blackbox.py) 관리
+기존 토글 스트리밍 (main.py) + 모션 블랙박스 (detection_cam0,1.py) 관리
 """
 
 import subprocess
@@ -23,7 +23,7 @@ detection_cam1_process = None    # detection_cam1.py
 
 # 프로세스 관리
 def start_toggle_streaming():
-    """기존 토글 스트리밍 시작 (main.py)"""
+    """기존 토글 스트리밍 시작 (cctv_main.py)"""
     global toggle_streaming_process
     
     if toggle_streaming_process and toggle_streaming_process.poll() is None:
@@ -31,8 +31,8 @@ def start_toggle_streaming():
         return True
     
     try:
-        # main.py 실행 (포트 8001)
-        cmd = ["python3", "/home/shinho/shinho/livecam/main.py"]
+        # cctv_main.py 실행 (포트 8001)
+        cmd = ["python3", "/home/shinho/shinho/livecam/cctv_main.py"]
         toggle_streaming_process = subprocess.Popen(cmd, 
                                                    stdout=subprocess.PIPE, 
                                                    stderr=subprocess.PIPE)
@@ -363,7 +363,7 @@ async def root():
                     </h2>
                     
                     <div class="description">
-                        기존 main.py 시스템 (그대로 유지)<br>
+                        cctv_main.py 시스템 <br>
                         카메라 0번 ↔ 카메라 1번 교차 스트리밍<br>
                         웹 UI로 카메라 토글 가능<br>
                         포트: 8001<br>
@@ -397,9 +397,9 @@ async def root():
                     <div class="description">
                         새로운 motion_blackbox.py 시스템<br>
                         <strong>카메라 0번, 1번 동시 모션 감지</strong><br>
-                        모션 감지시 전후 1.5분씩 총 3분 녹화<br>
+                        모션 감지시 전후 총 30초 녹화(5+25 sec)<br>
                         자동 저장 관리 (7일 보관)<br>
-                        백그라운드 24/7 자동 감시
+                        백그라운드 자동 감시
                     </div>
                     
                     <div class="button-group">
@@ -419,10 +419,10 @@ async def root():
             
             <div style="text-align: center; margin-top: 40px; color: #6c757d;">
                 <p><strong>시스템 구성:</strong></p>
-                <p>토글 스트리밍: 기존 main.py 그대로 유지 (카메라 0↔1 교차)</p>
+                <p>토글 스트리밍: cctv_main.py (카메라 0↔1 교차)</p>
                 <p>모션 감지 블랙박스: 새로운 기능 (카메라 0,1 동시 감지)</p>
                 <p>독립 실행: 두 시스템은 서로 간섭 없이 동시 동작 가능</p>
-                <p>주의사항: 토글 스트리밍은 1개 클라이언트만 접속 권장</p>
+                <p>주의사항: 토글 스트리밍은 1개 클라이언트만 접속 가능</p>
             </div>
         </div>
         
@@ -733,8 +733,8 @@ if __name__ == "__main__":
     print("")
     print("🔄 서비스 구성:")
     print("   • 통합 제어: 포트 8080 (이 서버)")
-    print("   • 토글 스트리밍: 포트 8001 (main.py - 1 클라이언트 권장)")
-    print("   • 모션 블랙박스: 백그라운드 (motion_blackbox.py - 듀얼 카메라 동시 감지)")
+    print("   • 토글 스트리밍: 포트 8001 (cctv_main.py - 1 클라이언트 권장)")
+    print("   • 모션 블랙박스: 백그라운드 (detection_cam0,1.py 듀얼 카메라 동시 감지)")
     
     uvicorn.run(
         app,
