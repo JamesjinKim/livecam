@@ -20,13 +20,29 @@ OpenCV 기반 지능형 모션 감지 및 이벤트 녹화 시스템
 - **Python**: 3.11+
 
 ### 설치
+
+#### 🚀 자동 설치 (권장)
+```bash
+# 저장소 클론
+git clone https://github.com/JamesjinKim/livecam.git
+cd livecam
+
+# 자동 설치 스크립트 실행
+./install.sh
+```
+
+#### 🔧 수동 설치
 ```bash
 # 시스템 패키지 설치
 sudo apt update
-sudo apt install -y rpicam-apps ffmpeg python3-opencv
+sudo apt install -y rpicam-apps ffmpeg python3-pip
 
-# Python 패키지 설치
-pip3 install fastapi uvicorn opencv-python numpy pillow psutil
+# Python 의존성 설치
+pip3 install -r requirements.txt --break-system-packages
+
+# 사용자 권한 설정
+sudo usermod -a -G video $USER
+# 재로그인 필요
 ```
 
 ---
