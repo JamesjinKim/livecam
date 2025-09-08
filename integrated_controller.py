@@ -17,7 +17,7 @@ import uvicorn
 app = FastAPI()
 
 # 전역 변수
-toggle_streaming_process = None  # 기존 main.py (포트 8001)
+toggle_streaming_process = None  # 기존 cctv_main.py (포트 8001)
 detection_cam0_process = None    # detection_cam0.py
 detection_cam1_process = None    # detection_cam1.py
 
@@ -395,7 +395,7 @@ async def root():
                     </h2>
                     
                     <div class="description">
-                        새로운 motion_blackbox.py 시스템<br>
+                        새로운 detection_cam 시스템<br>
                         <strong>카메라 0번, 1번 동시 모션 감지</strong><br>
                         모션 감지시 전후 총 30초 녹화(5+25 sec)<br>
                         자동 저장 관리 (7일 보관)<br>
@@ -713,7 +713,7 @@ async def auto_switch_to_detection():
 async def startup_event():
     """서버 시작 시 초기 설정"""
     print("🚀 통합 제어 시스템 시작")
-    print("   토글 스트리밍 (main.py) + 모션 감지 시스템 (detection_cam0.py, detection_cam1.py)")
+    print("   토글 스트리밍 (cctv_main.py) + 모션 감지 시스템 (detection_cam0.py, detection_cam1.py)")
     
     # 기본적으로 detection 시스템만 자동 시작
     print("🛡️ 모션 감지 시스템 자동 시작...")
