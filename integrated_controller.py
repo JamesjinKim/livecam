@@ -18,7 +18,8 @@ app = FastAPI()
 
 # 전역 변수
 toggle_streaming_process = None  # 기존 main.py (포트 8001)
-motion_blackbox_process = None   # 새로운 motion_blackbox.py
+detection_cam0_process = None    # detection_cam0.py
+detection_cam1_process = None    # detection_cam1.py
 
 # 프로세스 관리
 def start_toggle_streaming():
@@ -66,67 +67,113 @@ def stop_toggle_streaming():
             return False
     return True
 
-def start_motion_blackbox():
-    """듀얼 카메라 모션 블랙박스 시작"""
-    global motion_blackbox_process
+def start_detection_systems():
+    """개별 모션 감지 시스템 시작 (detection_cam0.py, detection_cam1.py)"""
+    global detection_cam0_process, detection_cam1_process
     
-    if motion_blackbox_process and motion_blackbox_process.poll() is None:
-        print("🛡️ 모션 블랙박스 이미 실행 중")
-        return True
+    success_count = 0
     
-    try:
-        # motion_blackbox.py 실행
-        cmd = ["python3", "/home/shinho/shinho/livecam/motion_blackbox.py"]
-        motion_blackbox_process = subprocess.Popen(cmd, 
-                                                  stdout=subprocess.PIPE, 
-                                                  stderr=subprocess.PIPE)
-        print(f"🛡️ 듀얼 카메라 모션 블랙박스 시작 (PID: {motion_blackbox_process.pid})")
-        return True
-    except Exception as e:
-        print(f"❌ 모션 블랙박스 시작 실패: {e}")
-        return False
-
-def stop_motion_blackbox():
-    """듀얼 카메라 모션 블랙박스 종료"""
-    global motion_blackbox_process
-    
-    if motion_blackbox_process and motion_blackbox_process.poll() is None:
+    # detection_cam0.py 시작
+    if not detection_cam0_process or detection_cam0_process.poll() is not None:
         try:
-            # 정상 종료 시도
-            motion_blackbox_process.send_signal(signal.SIGINT)
-            
-            try:
-                motion_blackbox_process.wait(timeout=5)
-                print("🛑 모션 블랙박스 정상 종료")
-            except subprocess.TimeoutExpired:
-                # 강제 종료
-                motion_blackbox_process.kill()
-                motion_blackbox_process.wait(timeout=2)
-                print("⚠️ 모션 블랙박스 강제 종료")
-            
-            motion_blackbox_process = None
-            return True
+            cmd = ["python3", "/home/shinho/shinho/livecam/detection_cam0.py"]
+            detection_cam0_process = subprocess.Popen(cmd, 
+                                                     stdout=subprocess.PIPE, 
+                                                     stderr=subprocess.PIPE)
+            print(f"📹 Detection Cam0 시작 (PID: {detection_cam0_process.pid})")
+            success_count += 1
         except Exception as e:
-            print(f"❌ 모션 블랙박스 종료 실패: {e}")
-            return False
-    return True
+            print(f"❌ Detection Cam0 시작 실패: {e}")
+    else:
+        print("📹 Detection Cam0 이미 실행 중")
+        success_count += 1
+    
+    # detection_cam1.py 시작
+    if not detection_cam1_process or detection_cam1_process.poll() is not None:
+        try:
+            cmd = ["python3", "/home/shinho/shinho/livecam/detection_cam1.py"]
+            detection_cam1_process = subprocess.Popen(cmd, 
+                                                     stdout=subprocess.PIPE, 
+                                                     stderr=subprocess.PIPE)
+            print(f"📹 Detection Cam1 시작 (PID: {detection_cam1_process.pid})")
+            success_count += 1
+        except Exception as e:
+            print(f"❌ Detection Cam1 시작 실패: {e}")
+    else:
+        print("📹 Detection Cam1 이미 실행 중")
+        success_count += 1
+    
+    return success_count == 2
+
+def stop_detection_systems():
+    """개별 모션 감지 시스템 종료"""
+    global detection_cam0_process, detection_cam1_process
+    
+    success_count = 0
+    
+    # detection_cam0.py 종료
+    if detection_cam0_process and detection_cam0_process.poll() is None:
+        try:
+            detection_cam0_process.send_signal(signal.SIGINT)
+            try:
+                detection_cam0_process.wait(timeout=5)
+                print("🛑 Detection Cam0 정상 종료")
+            except subprocess.TimeoutExpired:
+                detection_cam0_process.kill()
+                detection_cam0_process.wait(timeout=2)
+                print("⚠️ Detection Cam0 강제 종료")
+            detection_cam0_process = None
+            success_count += 1
+        except Exception as e:
+            print(f"❌ Detection Cam0 종료 실패: {e}")
+    else:
+        success_count += 1
+    
+    # detection_cam1.py 종료
+    if detection_cam1_process and detection_cam1_process.poll() is None:
+        try:
+            detection_cam1_process.send_signal(signal.SIGINT)
+            try:
+                detection_cam1_process.wait(timeout=5)
+                print("🛑 Detection Cam1 정상 종료")
+            except subprocess.TimeoutExpired:
+                detection_cam1_process.kill()
+                detection_cam1_process.wait(timeout=2)
+                print("⚠️ Detection Cam1 강제 종료")
+            detection_cam1_process = None
+            success_count += 1
+        except Exception as e:
+            print(f"❌ Detection Cam1 종료 실패: {e}")
+    else:
+        success_count += 1
+    
+    return success_count == 2
 
 def get_system_status():
     """통합 시스템 상태 조회"""
     toggle_running = toggle_streaming_process and toggle_streaming_process.poll() is None
-    blackbox_running = motion_blackbox_process and motion_blackbox_process.poll() is None
+    detection_cam0_running = detection_cam0_process and detection_cam0_process.poll() is None
+    detection_cam1_running = detection_cam1_process and detection_cam1_process.poll() is None
     
     return {
         "toggle_streaming": {
             "running": toggle_running,
             "pid": toggle_streaming_process.pid if toggle_running else None,
             "port": 8001,
-            "description": "기존 카메라 0↔1 토글 스트리밍"
+            "description": "카메라 0↔1 토글 스트리밍"
         },
-        "motion_blackbox": {
-            "running": blackbox_running,
-            "pid": motion_blackbox_process.pid if blackbox_running else None,
-            "description": "카메라 0,1 동시 모션 감지 블랙박스"
+        "detection_systems": {
+            "cam0": {
+                "running": detection_cam0_running,
+                "pid": detection_cam0_process.pid if detection_cam0_running else None,
+                "description": "카메라 0 모션 감지"
+            },
+            "cam1": {
+                "running": detection_cam1_running,
+                "pid": detection_cam1_process.pid if detection_cam1_running else None,
+                "description": "카메라 1 모션 감지"
+            },
+            "both_running": detection_cam0_running and detection_cam1_running
         },
         "integration_controller": {
             "running": True,
@@ -293,6 +340,20 @@ async def root():
                 시스템 상태 로딩 중...
             </div>
             
+            <!-- 🚀 Phase 1: 자동 전환 버튼 섹션 -->
+            <div style="text-align: center; margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 2px solid #007bff;">
+                <h3 style="color: #007bff; margin-bottom: 15px;">🔄 스마트 모드 전환</h3>
+                <button class="btn-primary" style="margin: 0 10px; padding: 12px 24px; font-size: 16px; font-weight: bold;" onclick="autoSwitchToCctv()">
+                    🎥 CCTV 모드로 전환
+                </button>
+                <button class="btn-success" style="margin: 0 10px; padding: 12px 24px; font-size: 16px; font-weight: bold;" onclick="autoSwitchToDetection()">
+                    🛡️ 모션 감지 모드로 전환
+                </button>
+                <div id="switch-status" style="margin-top: 10px; font-size: 14px; color: #6c757d;">
+                    클릭 한 번으로 시스템 자동 전환
+                </div>
+            </div>
+            
             <div class="system-grid">
                 <!-- 기존 토글 스트리밍 -->
                 <div class="system-card">
@@ -388,21 +449,75 @@ async def root():
             }
             
             function controlMotionBlackbox(action) {
-                const url = `/api/motion-blackbox/${action}`;
+                const url = `/api/detection-systems/${action}`;
                 
                 fetch(url, { method: 'POST' })
                     .then(response => response.json())
                     .then(data => {
                         if (data.success) {
-                            console.log(`Motion blackbox ${action} success`);
+                            console.log(`Detection systems ${action} success`);
                             updateStatus();
                         } else {
-                            alert(`모션 블랙박스 ${action} 실패: ${data.message}`);
+                            alert(`모션 감지 시스템 ${action} 실패: ${data.message}`);
                         }
                     })
                     .catch(error => {
-                        console.error('Motion blackbox control error:', error);
-                        alert(`모션 블랙박스 제어 오류: ${error.message}`);
+                        console.error('Detection systems control error:', error);
+                        alert(`모션 감지 시스템 제어 오류: ${error.message}`);
+                    });
+            }
+            
+            // 🚀 Phase 1: 자동 전환 함수들
+            function autoSwitchToCctv() {
+                document.getElementById('switch-status').textContent = '⏳ CCTV 모드로 전환 중...';
+                document.getElementById('switch-status').style.color = '#007bff';
+                
+                fetch('/api/auto-switch-to-cctv', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            document.getElementById('switch-status').textContent = '✅ CCTV 모드 전환 완료! 잠시 후 CCTV 화면에 접속하세요.';
+                            document.getElementById('switch-status').style.color = '#28a745';
+                            
+                            // 3초 후 CCTV 페이지로 리다이렉트
+                            setTimeout(() => {
+                                const cctvUrl = data.cctv_url || 'http://localhost:8001';
+                                window.open(cctvUrl.replace('localhost', window.location.hostname), '_blank');
+                            }, 3000);
+                            
+                            updateStatus();
+                        } else {
+                            document.getElementById('switch-status').textContent = `❌ 전환 실패: ${data.message}`;
+                            document.getElementById('switch-status').style.color = '#dc3545';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Auto-switch to CCTV error:', error);
+                        document.getElementById('switch-status').textContent = '❌ CCTV 전환 중 오류 발생';
+                        document.getElementById('switch-status').style.color = '#dc3545';
+                    });
+            }
+            
+            function autoSwitchToDetection() {
+                document.getElementById('switch-status').textContent = '⏳ 모션 감지 모드로 전환 중...';
+                document.getElementById('switch-status').style.color = '#007bff';
+                
+                fetch('/api/auto-switch-to-detection', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            document.getElementById('switch-status').textContent = '✅ 모션 감지 모드 전환 완료! 자동 감시가 시작되었습니다.';
+                            document.getElementById('switch-status').style.color = '#28a745';
+                            updateStatus();
+                        } else {
+                            document.getElementById('switch-status').textContent = `❌ 전환 실패: ${data.message}`;
+                            document.getElementById('switch-status').style.color = '#dc3545';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Auto-switch to detection error:', error);
+                        document.getElementById('switch-status').textContent = '❌ 모션 감지 전환 중 오류 발생';
+                        document.getElementById('switch-status').style.color = '#dc3545';
                     });
             }
             
@@ -425,13 +540,20 @@ async def root():
                             streamingLink.href = '#';
                         }
                         
-                        // 모션 블랙박스 상태
+                        // 모션 감지 시스템 상태
                         const blackboxStatus = document.getElementById('blackbox-status');
                         const blackboxInfo = document.getElementById('blackbox-info');
                         
-                        if (data.motion_blackbox.running) {
+                        const detectionSystems = data.detection_systems;
+                        if (detectionSystems && detectionSystems.both_running) {
                             blackboxStatus.className = 'status-indicator status-running';
-                            blackboxInfo.innerHTML = `상태: 실행 중 (PID: ${data.motion_blackbox.pid})`;
+                            blackboxInfo.innerHTML = `상태: 실행 중 (Cam0: ${detectionSystems.cam0.pid}, Cam1: ${detectionSystems.cam1.pid})`;
+                        } else if (detectionSystems && (detectionSystems.cam0.running || detectionSystems.cam1.running)) {
+                            blackboxStatus.className = 'status-indicator status-running';
+                            const runningCams = [];
+                            if (detectionSystems.cam0.running) runningCams.push(`Cam0: ${detectionSystems.cam0.pid}`);
+                            if (detectionSystems.cam1.running) runningCams.push(`Cam1: ${detectionSystems.cam1.pid}`);
+                            blackboxInfo.innerHTML = `상태: 부분 실행 (${runningCams.join(', ')})`;
                         } else {
                             blackboxStatus.className = 'status-indicator status-stopped';
                             blackboxInfo.innerHTML = '상태: 중지됨';
@@ -442,7 +564,11 @@ async def root():
                         const runningServices = [];
                         
                         if (data.toggle_streaming.running) runningServices.push('토글 스트리밍');
-                        if (data.motion_blackbox.running) runningServices.push('모션 블랙박스');
+                        if (detectionSystems && detectionSystems.both_running) {
+                            runningServices.push('모션 감지 (양쪽 카메라)');
+                        } else if (detectionSystems && (detectionSystems.cam0.running || detectionSystems.cam1.running)) {
+                            runningServices.push('모션 감지 (일부 카메라)');
+                        }
                         
                         if (runningServices.length > 0) {
                             overallStatus.textContent = `실행 중인 서비스: ${runningServices.join(', ')}`;
@@ -496,41 +622,109 @@ async def control_toggle_streaming(action: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Toggle streaming control error: {str(e)}")
 
-@app.post("/api/motion-blackbox/{action}")
-async def control_motion_blackbox(action: str):
-    """모션 블랙박스 제어 API"""
+@app.post("/api/detection-systems/{action}")
+async def control_detection_systems(action: str):
+    """모션 감지 시스템 제어 API"""
     if action not in ["start", "stop"]:
         raise HTTPException(status_code=400, detail="Invalid action. Use 'start' or 'stop'")
     
     try:
         if action == "start":
-            success = start_motion_blackbox()
-            message = "모션 블랙박스 시작됨" if success else "모션 블랙박스 시작 실패"
+            success = start_detection_systems()
+            message = "모션 감지 시스템 시작됨" if success else "모션 감지 시스템 시작 실패"
         else:
-            success = stop_motion_blackbox()
-            message = "모션 블랙박스 중지됨" if success else "모션 블랙박스 중지 실패"
+            success = stop_detection_systems()
+            message = "모션 감지 시스템 중지됨" if success else "모션 감지 시스템 중지 실패"
         
         return {"success": success, "message": message}
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Motion blackbox control error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Detection systems control error: {str(e)}")
+
+# 🚀 Phase 1: 자동 전환 API 추가
+@app.post("/api/auto-switch-to-cctv")
+async def auto_switch_to_cctv():
+    """자동으로 detection 종료 후 CCTV 시작"""
+    print("🔄 Auto-switching to CCTV mode...")
+    
+    try:
+        # 1단계: detection 시스템 종료
+        detection_stopped = stop_detection_systems()
+        if not detection_stopped:
+            return {"success": False, "message": "Detection 시스템 종료 실패"}
+        
+        # 잠시 대기 (프로세스 정리 시간)
+        import asyncio
+        await asyncio.sleep(2)
+        
+        # 2단계: CCTV 시스템 시작
+        cctv_started = start_toggle_streaming()
+        if not cctv_started:
+            # 실패 시 detection 다시 시작
+            start_detection_systems()
+            return {"success": False, "message": "CCTV 시스템 시작 실패"}
+        
+        print("✅ Successfully switched to CCTV mode")
+        return {
+            "success": True, 
+            "mode": "cctv",
+            "message": "CCTV 모드로 전환 완료",
+            "cctv_url": "http://localhost:8001"
+        }
+    
+    except Exception as e:
+        print(f"❌ Auto-switch to CCTV error: {e}")
+        # 오류 시 detection 다시 시작 시도
+        start_detection_systems()
+        raise HTTPException(status_code=500, detail=f"Auto-switch error: {str(e)}")
+
+@app.post("/api/auto-switch-to-detection")  
+async def auto_switch_to_detection():
+    """자동으로 CCTV 종료 후 detection 시작"""
+    print("🔄 Auto-switching to detection mode...")
+    
+    try:
+        # 1단계: CCTV 시스템 종료
+        cctv_stopped = stop_toggle_streaming()
+        if not cctv_stopped:
+            return {"success": False, "message": "CCTV 시스템 종료 실패"}
+        
+        # 잠시 대기 (프로세스 정리 시간)
+        import asyncio
+        await asyncio.sleep(2)
+        
+        # 2단계: detection 시스템 시작
+        detection_started = start_detection_systems()
+        if not detection_started:
+            return {"success": False, "message": "Detection 시스템 시작 실패"}
+        
+        print("✅ Successfully switched to detection mode")
+        return {
+            "success": True,
+            "mode": "detection", 
+            "message": "모션 감지 모드로 전환 완료"
+        }
+    
+    except Exception as e:
+        print(f"❌ Auto-switch to detection error: {e}")
+        raise HTTPException(status_code=500, detail=f"Auto-switch error: {str(e)}")
 
 @app.on_event("startup")
 async def startup_event():
     """서버 시작 시 초기 설정"""
     print("🚀 통합 제어 시스템 시작")
-    print("   기존 토글 스트리밍 (main.py) + 새로운 모션 블랙박스 (motion_blackbox.py)")
+    print("   토글 스트리밍 (main.py) + 모션 감지 시스템 (detection_cam0.py, detection_cam1.py)")
     
-    # 기본적으로 모션 블랙박스만 자동 시작
-    print("🛡️ 모션 블랙박스 자동 시작...")
-    start_motion_blackbox()
+    # 기본적으로 detection 시스템만 자동 시작
+    print("🛡️ 모션 감지 시스템 자동 시작...")
+    start_detection_systems()
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """서버 종료 시 모든 프로세스 정리"""
     print("🧹 모든 서비스 정리 중...")
     stop_toggle_streaming()
-    stop_motion_blackbox()
+    stop_detection_systems()
 
 if __name__ == "__main__":
     print("🚀 Starting integrated controller on port 8080")

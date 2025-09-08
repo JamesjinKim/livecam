@@ -2,253 +2,389 @@
 
 ## 🎯 프로젝트 개요
 
-라즈베리파이 5 기반 듀얼 카메라 블랙박스 시스템
-- **목적**: 실시간 영상 녹화 및 웹 스트리밍 시스템
-- **핵심**: rpicam-vid 기반 MP4 직접 저장 및 MJPEG 스트리밍
-- **특징**: 듀얼 카메라 지원, H.264 하드웨어 인코딩, 실시간 웹 스트리밍
+라즈베리파이 5 기반 통합 CCTV 및 모션 감지 블랙박스 시스템
+- **목적**: 실시간 CCTV 스트리밍 + 지능형 모션 감지 블랙박스
+- **핵심**: FastAPI 웹 서버 + OpenCV 모션 감지 + rpicam-vid H.264 인코딩
+- **특징**: 단일 클라이언트 CCTV, 프리버퍼 블랙박스, 날짜별 자동 분류
 
 ## 🏗️ 시스템 아키텍처
 
 ### 기술 스택
 - **하드웨어**: Raspberry Pi 5 (BCM2712), OV5647 카메라 모듈 × 2
-- **영상 캡처**: rpicam-vid (라즈베리파이 공식 도구)
-- **영상 포맷**: MP4 (H.264 하드웨어 인코딩), MJPEG (실시간 스트리밍)
-- **저장 방식**: 직접 MP4 저장, 실시간 파일 쓰기 with flush
-- **웹 스트리밍**: FastAPI 기반 MJPEG 스트리밍 서버 (30fps 최적화)
+- **CCTV**: FastAPI + MJPEG 스트리밍 (단일 클라이언트)
+- **모션 감지**: OpenCV BackgroundSubtractorMOG2
+- **영상 처리**: rpicam-vid H.264 하드웨어 인코딩
+- **프론트엔드**: Vanilla JavaScript, 반응형 웹 UI
 
-### 주요 구성 요소
+### 시스템 구성
 
 ```
 livecam/
-├── start_blackbox.sh       # MP4 녹화 실행 스크립트
-├── start_streaming.sh      # 웹 스트리밍 실행 스크립트 (30fps)
-├── src/                    # 소스 코드
-│   ├── core/              # 핵심 캡처 시스템 (레거시)
-│   ├── optimized/         # 최적화 구현 (레거시)
-│   ├── legacy/            # DMA 직접 접근 시도 (레거시)
-│   └── streaming/         # 웹 스트리밍 서버
-│       ├── stream_optimized.py         # 15fps 안정화 버전
-│       ├── stream_optimized_30fps.py   # 30fps 고성능 버전
-│       ├── stream_fixed.py             # 메모리 버퍼 수정 버전
-│       ├── stream_dma.py               # DMA 시뮬레이션 (분석됨)
-│       └── stream_zerocopy.py          # Zero-copy 시뮬레이션 (분석됨)
-├── scripts/               # 유틸리티 스크립트
-└── videos/                # 영상 저장 디렉토리
-    ├── 640x480/          # 640x480 해상도
-    │   ├── cam0/         # 카메라 0번
-    │   └── cam1/         # 카메라 1번
-    ├── 1280x720/         # 720p 해상도
-    │   ├── cam0/         # 카메라 0번
-    │   └── cam1/         # 카메라 1번
-    └── 1920x1080/        # 1080p 해상도
-        ├── cam0/         # 카메라 0번
-        └── cam1/         # 카메라 1번
+├── main.py                     # 🔴 CCTV 실시간 스트리밍 서버 (FastAPI)
+├── detection_cam0.py           # ⚫ 카메라 0 모션 감지 블랙박스  
+├── detection_cam1.py           # ⚫ 카메라 1 모션 감지 블랙박스
+├── PRD.md                      # 📋 제품 요구사항 문서
+├── README.md                   # 📖 사용자 가이드
+├── CLAUDE.md                   # 🔧 개발자 기술 문서 (현재 파일)
+└── videos/                     # 영상 저장소
+    └── motion_events/          # 모션 감지 이벤트 저장
+        ├── cam0/
+        │   ├── 250908/         # YYMMDD 날짜별 폴더
+        │   └── 250909/
+        └── cam1/
+            ├── 250908/
+            └── 250909/
 ```
 
-## 💻 개발 환경 설정
+---
 
-### 필수 패키지 설치
-```bash
-sudo apt update
-sudo apt install -y rpicam-apps ffmpeg python3-venv
+## 🔴 Part 1: CCTV 실시간 스트리밍 시스템 (main.py)
+
+### 핵심 기술 구현
+
+#### 1. 단일 클라이언트 제한 시스템
+```python
+# 전역 클라이언트 관리
+active_clients = set()  # IP 기반 클라이언트 추적
+MAX_CLIENTS = 1  # 최대 1개 클라이언트
+
+@app.get("/stream")
+async def video_stream(request: Request):
+    client_ip = request.client.host
+    
+    # 단일 클라이언트 제한 확인
+    if len(active_clients) >= MAX_CLIENTS and client_ip not in active_clients:
+        raise HTTPException(status_code=423, detail="Max 1 client allowed")
 ```
 
-### 웹 스트리밍 환경 설정
-```bash
-# 가상환경 생성 및 패키지 설치
-python3 -m venv venv
-source venv/bin/activate
-pip install fastapi uvicorn psutil
+**장점**:
+- 안정적인 30fps 스트리밍 보장
+- 리소스 경합 방지
+- 네트워크 대역폭 최적화
+
+#### 2. 적응형 MJPEG 스트리밍
+```python
+def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
+    # 해상도별 동적 버퍼 설정
+    if current_resolution == "1280x720":
+        chunk_size = 32768       # 32KB 청크
+        buffer_limit = 2 * 1024 * 1024  # 2MB 버퍼
+    else:  # 640x480
+        chunk_size = 16384       # 16KB 청크  
+        buffer_limit = 512 * 1024       # 512KB 버퍼
 ```
 
-### 카메라 확인
+**최적화 기법**:
+- 해상도별 차별화된 버퍼 크기
+- 동적 메모리 관리 (순환 버퍼)
+- 프레임 크기 검증 및 필터링
+
+#### 3. 듀얼 카메라 토글 시스템
+```python
+@app.post("/switch/{camera_id}")
+async def switch_camera(camera_id: int):
+    global current_camera
+    
+    # 기존 카메라 완전 정리
+    if current_camera in camera_processes:
+        stop_camera_stream(current_camera)  # SIGTERM → SIGKILL
+    
+    # 새 카메라 시작
+    success = start_camera_stream(camera_id)
+    await asyncio.sleep(1.5)  # 안정화 대기
+```
+
+**프로세스 관리**:
+- 정상 종료(SIGTERM) → 강제 종료(SIGKILL) 순차 처리
+- stdout/stderr 버퍼 완전 정리
+- 좀비 프로세스 방지
+
+#### 4. 실시간 통계 시스템
+```python
+# 매초 업데이트되는 스트리밍 통계
+stream_stats = {
+    0: {"frame_count": 0, "avg_frame_size": 0, "fps": 0, "last_update": 0},
+    1: {"frame_count": 0, "avg_frame_size": 0, "fps": 0, "last_update": 0}
+}
+
+@app.get("/api/stats")
+async def get_stats():
+    return {
+        "camera": current_camera,
+        "resolution": current_resolution,
+        "stats": stream_stats[current_camera]
+    }
+```
+
+### 웹 인터페이스 기술
+
+#### 반응형 UI 설계
+```javascript
+// 3초마다 연결 상태 체크
+function checkStreamConnection() {
+    fetch('/stream', { method: 'HEAD' })
+        .then(response => {
+            if (response.status === 423) {
+                status.textContent = '❌ 다른 사용자가 스트리밍 중입니다';
+            }
+        });
+}
+setInterval(checkStreamConnection, 3000);
+```
+
+**UI 특징**:
+- 전체 화면 활용 영상 표시
+- 실시간 통계 업데이트 (FPS, 프레임 수, 데이터 크기)
+- 연결 제한 상태 자동 감지 및 표시
+
+#### CSS 디자인 시스템
+- **색상 팔레트**: 그레이 톤 + 파란색 액센트
+- **레이아웃**: Flexbox 기반 반응형
+- **인터랙션**: 호버 효과 + 활성 상태 표시
+
+### 성능 최적화 전략
+
+#### 메모리 관리
+- **순환 버퍼**: 고정 크기로 메모리 누수 방지
+- **청크 단위 읽기**: 16KB/32KB 최적 청크 크기
+- **가비지 컬렉션**: 주기적 버퍼 정리
+
+#### 네트워크 최적화
+- **HTTP Keep-Alive**: 연결 재사용
+- **MJPEG 품질**: 80% 압축 품질
+- **프레임 드롭 방지**: 버퍼 임계값 관리
+
+---
+
+## ⚫ Part 2: 모션 감지 블랙박스 시스템
+
+### 아키텍처 패턴
+
+#### 1. 단일 책임 원칙 적용
+```python
+# 각 기능별 독립 클래스 설계
+├── MotionDetectionSystem      # 메인 조정자
+├── CameraStreamManager        # 카메라 스트림 전담
+├── SimpleMotionDetector       # 모션 감지 알고리즘  
+├── VideoRecorder             # 프리버퍼 + 녹화 시스템
+├── EventManager              # 이벤트 로깅
+└── Config                    # 설정 관리
+```
+
+#### 2. 프리버퍼 시스템 설계
+```python
+class VideoRecorder:
+    def __init__(self, pre_buffer=5, post_buffer=25):
+        # skip_frames를 고려한 실제 fps 계산
+        self.actual_buffer_fps = FRAMERATE // SKIP_FRAME  # 30 / 3 = 10fps
+        self.frame_buffer = deque(maxlen=pre_buffer * self.actual_buffer_fps)  # 50 프레임
+        
+    def add_frame_to_buffer(self, frame):
+        # JPEG 압축으로 메모리 효율성 확보
+        _, jpeg_data = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        self.frame_buffer.append(jpeg_data)
+```
+
+**핵심 설계 원리**:
+- 메모리 효율: JPEG 압축 저장
+- 정확한 시간: 프레임 복제로 30fps 보장
+- 순환 버퍼: 고정 메모리 사용량
+
+#### 3. 모션 감지 알고리즘
+```python
+class SimpleMotionDetector:
+    def __init__(self, threshold=10000, cooldown=12):
+        self.background_subtractor = cv2.BackgroundSubtractorMOG2()
+        self.background_frames = deque(maxlen=60)  # 60프레임 배경 학습
+        
+    def detect(self, frame):
+        # 그레이스케일 + 가우시안 블러
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (11, 11), 0)
+        
+        # 배경 차분 및 임계값 적용
+        frame_delta = cv2.absdiff(self.background_frame, gray)
+        thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
+        
+        # 변화된 픽셀 수 계산
+        changed_pixels = cv2.countNonZero(thresh)
+        return changed_pixels > self.threshold
+```
+
+**알고리즘 최적화**:
+- 배경 안정화: 60프레임 학습으로 false positive 감소
+- 적응형 업데이트: 느린 배경 변화 대응
+- 형태학적 연산: 노이즈 제거
+
+#### 4. 영상 병합 시스템
+```python
+def _merge_video_files(self, input_files, output_file):
+    merge_cmd = [
+        "ffmpeg",
+        "-f", "concat", "-safe", "0", "-i", str(list_file),
+        "-c:v", "libx264",      # H.264 코덱
+        "-preset", "fast",      # 인코딩 속도 향상
+        "-t", "30",            # 정확히 30초
+        "-r", "30",            # 30fps 통일
+        "-pix_fmt", "yuv420p", # 호환성 향상
+        "-y", str(output_file)
+    ]
+```
+
+**품질 보장 메커니즘**:
+- Duration 검증: ffprobe로 실제 길이 확인
+- 프레임레이트 통일: 모든 구간 30fps
+- 에러 복구: 60초 타임아웃 + 재시도
+
+### 고급 기능 구현
+
+#### 1. 날짜별 자동 분류
+```python
+def start_recording(self, camera_id):
+    # YYMMDD 형식 날짜 폴더 생성
+    now = datetime.now()
+    date_folder = now.strftime("%y%m%d")  # 250908
+    daily_dir = self.output_dir / date_folder
+    daily_dir.mkdir(parents=True, exist_ok=True)
+```
+
+#### 2. 스레드 안전성
+```python
+class VideoRecorder:
+    def __init__(self):
+        self.buffer_lock = threading.Lock()
+        self.merge_thread = None
+        self.merge_thread_stop = threading.Event()
+        
+    def stop_recording(self):
+        # 병합 스레드 안전한 종료
+        if self.merge_thread and self.merge_thread.is_alive():
+            self.merge_thread_stop.set()
+            self.merge_thread.join(timeout=3)
+```
+
+#### 3. 리소스 정리 시스템
+```python
+def cleanup_temp_files(self):
+    # 모든 임시 파일 체계적 정리
+    for date_folder in self.output_dir.glob("[0-9][0-9][0-9][0-9][0-9][0-9]"):
+        for temp_file in date_folder.glob("temp_*.h264"):
+            temp_file.unlink()
+        for list_file in date_folder.glob("concat_*.txt"):
+            list_file.unlink()
+```
+
+---
+
+## 🔧 개발 도구 및 디버깅
+
+### 로깅 시스템
+
+#### CCTV 시스템 로그
+```python
+# 클라이언트 연결/해제
+👥 Client connected: 192.168.0.21 (Total: 1)
+🚫 Stream request rejected: 192.168.0.20 (Max clients: 1)
+
+# 성능 통계
+📊 Camera 0 (640x480): 150 frames, 31.0 fps, avg 31KB
+🔄 Switching from camera 0 to camera 1
+```
+
+#### 모션 감지 시스템 로그
+```python
+# 모션 감지 과정
+Background stabilized with 60 frames - motion detection active
+Motion detected: 21701 changed pixels
+
+# 녹화 과정
+🎬 Motion Event Recording Started
+Pre-buffer saved: buffer_20250908_143025.mp4
+  - Frames: 50 frames @ 10fps capture
+  - Duration: 5.0s (expected: 5.0s)
+
+# 병합 완료
+✅ Video merged successfully: 250908/motion_event_cam0_20250908_143025.mp4
+  - Final duration: 30.0s (expected: 30s, diff: 0.0s)
+  ✓ Pre-buffer successfully included in final video
+```
+
+### 성능 모니터링
+
+#### 리소스 사용량
 ```bash
-# 연결된 카메라 목록
+# 실시간 모니터링 명령어
+top -d 1                    # CPU 사용률
+ps aux | grep rpicam        # 프로세스 상태
+df -h                       # 디스크 사용량
+du -h videos/motion_events/ # 저장 용량
+```
+
+#### 성능 벤치마크
+| 시스템 | CPU 사용률 | 메모리 | 디스크 I/O |
+|--------|------------|--------|------------|
+| CCTV (480p) | ~10% | 50MB | 1-2MB/s |
+| CCTV (720p) | ~15% | 60MB | 3-4MB/s |
+| 모션감지 (단일) | ~20% | 60MB | 6MB/30s |
+| 통합 실행 | ~40% | 120MB | 8-10MB/s |
+
+### 문제 해결 가이드
+
+#### 1. CCTV 스트리밍 문제
+```bash
+# 카메라 하드웨어 확인
 rpicam-hello --list-cameras
-
-# 카메라 0번 테스트
 rpicam-hello --camera 0 --timeout 2000
 
-# 카메라 1번 테스트  
-rpicam-hello --camera 1 --timeout 2000
-```
-
-## 🔧 핵심 기술 구현
-
-### 1. rpicam-vid 기반 MP4 직접 저장
-```bash
-rpicam-vid --camera 0 \
-  --width 640 --height 480 \
-  --output blackbox_cam0.mp4 \
-  --timeout 0 \
-  --nopreview \
-  --framerate 30 \
-  --flush
-```
-
-**주요 파라미터 설명**:
-- MP4 직접 출력 (H.264 하드웨어 인코딩)
-- `--timeout 0`: 무한 녹화 (SIGINT로 정상 종료)
-- `--nopreview`: 미리보기 비활성화로 리소스 절약
-- `--flush`: 실시간 파일 쓰기 보장
-
-### 2. 듀얼 카메라 동시 처리
-```bash
-# start_blackbox.sh 내부 구현
-rpicam-vid --camera 0 ... &  # 백그라운드 실행
-CAM0_PID=$!
-
-rpicam-vid --camera 1 ... &  # 백그라운드 실행
-CAM1_PID=$!
-
-# 종료 신호 처리 (MP4 정상 마무리)
-trap 'kill -INT $CAM0_PID $CAM1_PID; sleep 3; wait' INT
-```
-
-### 3. 웹 스트리밍 서버 구현
-
-#### 30fps 고성능 스트리밍 서버 (`stream_optimized_30fps.py`)
-```python
-# 30fps 최적화 설정
-rpicam-vid --camera 0 --width 640 --height 480 \
-  --timeout 0 --nopreview --codec mjpeg \
-  --quality 80 --framerate 30 --bitrate 0 \
-  --denoise cdn_fast --flush 1 --output -
-```
-
-**핵심 최적화 기술**:
-- **768KB 고정 버퍼**: 메모리 누수 방지 및 30fps 처리량 보장
-- **3단계 버퍼 풀**: 순환 버퍼 관리로 지연 최소화
-- **적응형 청크 읽기**: 32KB 청크로 프레임 드롭 방지
-- **인라인 JPEG 검색**: memoryview 직접 사용으로 복사 오버헤드 제거
-- **하드웨어 디노이징**: `cdn_fast`로 품질 향상
-
-#### 웹 UI 특징
-- **전체 화면 활용**: 브라우저 창 전체를 활용한 최대 영상 크기
-- **심플한 그레이 디자인**: 밝은 회색 톤의 모던 UI
-- **부드러운 블루 액센트**: 파란색 배지와 인디케이터
-- **반응형 레이아웃**: 2분할 그리드로 듀얼 카메라 동시 표시
-
-### 4. 성능 최적화 전략
-
-#### MP4 직접 저장 방식
-- **H.264 하드웨어 인코딩**: 라즈베리파이 5 지원
-- **CPU 부하**: H.264 하드웨어 (10-20%) vs 소프트웨어 (100%)
-- **저장 효율**: 직접 MP4 저장으로 즉시 재생 가능
-
-#### 메모리 및 I/O 최적화
-- DMA 채널 활용 (18개 채널 중 자동 할당)
-- 17GB/s 메모리 대역폭 활용
-- 실시간 flush로 데이터 무결성 보장
-
-## 📊 성능 지표
-
-### CPU 사용률 비교
-
-#### MP4 직접 저장
-| 모드 | 해상도 | CPU 사용률 |
-|------|--------|-----------|
-| 단일 카메라 | 640×480 | ~10% |
-| 단일 카메라 | 1280×720 | ~15% |
-| 단일 카메라 | 1920×1080 | ~20% |
-| 듀얼 카메라 | 640×480 | ~20% |
-| 듀얼 카메라 | 1280×720 | ~30% |
-| 듀얼 카메라 | 1920×1080 | ~40% |
-
-#### 웹 스트리밍 서버
-| 버전 | FPS | 메모리 사용량 | CPU 사용률 |
-|------|-----|-------------|-----------|
-| stream_optimized.py | 15fps | ~50MB | ~0.3% |
-| stream_optimized_30fps.py | 30fps | ~52MB | ~0.3% |
-
-### 저장 용량 (MP4 형식)
-- 640×480: 약 1.5MB/10초 (9MB/분)
-- 1280×720: 약 12MB/10초 (72MB/분)
-- 1920×1080: 약 25MB/10초 (150MB/분)
-
-## 🚀 실행 방법
-
-### MP4 녹화 실행
-```bash
-# 듀얼 카메라 640x480 해상도로 녹화
-./start_blackbox.sh dual-640
-```
-
-### 웹 스트리밍 실행
-```bash
-# 30fps 고성능 스트리밍 서버
-./start_streaming.sh
-
-# 접속 URL: http://라즈베리파이_IP:8000
-```
-
-## 🔬 스트리밍 기술 분석
-
-### DMA 및 Zero-copy 구현 분석
-
-#### `stream_dma.py` - "가짜 DMA" 분석 결과
-- **실제**: 일반적인 파일 I/O를 사용하는 표준 구현
-- **문제점**: DMA 레지스터 직접 접근 없이 `/dev/shm` 공유 메모리만 사용
-- **성능**: 일반적인 파일 읽기와 동일한 성능
-
-#### `stream_zerocopy.py` - "가짜 Zero-copy" 분석 결과
-- **실제**: named pipes + mmap 사용하지만 `bytes()` 복사 발생
-- **문제점**: `chunk = bytes(view[...])` 코드로 메모리 복사 수행
-- **성능**: Zero-copy 목적과 반대되는 다중 메모리 복사 발생
-
-### 메모리 최적화 기법
-
-#### 검증된 최적화 방식 (`stream_optimized_30fps.py`)
-- **고정 크기 순환 버퍼**: 768KB 고정 할당으로 동적 할당 제거
-- **직접 바이트 검색**: memoryview로 JPEG 헤더 검색
-- **가비지 컬렉션 제어**: 1500프레임마다 자동 실행
-- **프레임 드롭 방지**: 적응형 32KB 청크 읽기
-
-## 🛠️ 개발 및 디버깅
-
-### 실시간 모니터링
-```bash
-# CPU 사용률 모니터링
-top -d 1
-
-# 프로세스 확인
-ps aux | grep rpicam
-
-# 디스크 사용량
-df -h
-
-# 실시간 로그
-journalctl -f
-```
-
-### 문제 해결
-
-#### 카메라 인식 오류
-```bash
-# 카메라 모듈 재연결 후
-sudo modprobe -r bcm2835-v4l2
-sudo modprobe bcm2835-v4l2
-```
-
-#### 권한 문제
-```bash
+# 권한 문제 해결
 sudo usermod -a -G video $USER
-# 로그아웃 후 재로그인 필요
 ```
 
-## 🔄 지속 통합/배포
+#### 2. 모션 감지 정확도 문제
+```python
+# 민감도 조정 (detection_cam0.py)
+CURRENT_SENSITIVITY = 'medium'  # low → medium으로 증가
+
+# 쿨다운 시간 조정
+SENSITIVITY_LEVELS['low']['cooldown'] = 8  # 12초 → 8초
+```
+
+#### 3. 영상 병합 오류
+```bash
+# ffmpeg 설치 확인
+which ffmpeg
+ffmpeg -version
+
+# 디스크 공간 확인
+df -h /home/pi
+```
+
+#### 4. 메모리 부족 문제
+```python
+# 프리버퍼 크기 감소
+PRE_BUFFER_DURATION = 3  # 5초 → 3초
+
+# 해상도 낮춤
+RECORDING_WIDTH = 960   # 1280 → 960
+RECORDING_HEIGHT = 540  # 720 → 540
+```
+
+---
+
+## 🚀 배포 및 운영
 
 ### 자동 시작 설정 (systemd)
 ```ini
+# /etc/systemd/system/cctv-stream.service
 [Unit]
-Description=Industrial CCTV Blackbox System
+Description=CCTV Streaming System
 After=multi-user.target
 
 [Service]
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/livecam
-ExecStart=/home/pi/livecam/start_blackbox.sh dual-640
+ExecStart=/usr/bin/python3 main.py
 Restart=always
 RestartSec=10
 
@@ -256,12 +392,30 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
+```ini
+# /etc/systemd/system/motion-cam0.service
+[Unit]
+Description=Motion Detection Camera 0
+After=multi-user.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/livecam
+ExecStart=/usr/bin/python3 detection_cam0.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
+```
+
 ### 로그 로테이션
 ```bash
-# /etc/logrotate.d/blackbox
-/home/pi/livecam/videos/**/*.mp4 {
+# /etc/logrotate.d/motion-events
+/home/pi/livecam/videos/motion_events/**/*.mp4 {
     daily
-    rotate 7
+    rotate 30
     compress
     delaycompress
     missingok
@@ -269,72 +423,113 @@ WantedBy=multi-user.target
 }
 ```
 
-## 📝 코드 컨벤션
+### 백업 스크립트
+```bash
+#!/bin/bash
+# backup_videos.sh
 
-### 파일 명명 규칙
-- MP4 파일: `blackbox_cam[N]_[resolution]_YYYYMMDD_HHMMSS.mp4`
-- 예시: `blackbox_cam0_640_20241231_143025.mp4`
+SOURCE="/home/pi/livecam/videos/motion_events/"
+DEST="/mnt/external/backup/"
+DATE=$(date +%Y%m%d)
 
-### 스크립트 작성 가이드
-- 명확한 오류 메시지
-- 사용자 친화적 출력 (이모지 사용)
-- 종료 시 정리 작업 (trap 사용)
+# 7일 이상된 파일만 백업 후 삭제
+find $SOURCE -name "*.mp4" -mtime +7 -exec cp {} $DEST \;
+find $SOURCE -name "*.mp4" -mtime +7 -delete
 
-## 🚀 향후 개발 계획
+echo "Backup completed: $DATE"
+```
 
-### 단기 (1-2주)
-- [x] MP4 직접 저장 시스템 구현
-- [x] 웹 스트리밍 인터페이스 (30fps 최적화)
-- [x] 메모리 누수 방지 및 안정성 최적화
-- [ ] 순환 녹화 (디스크 공간 관리)
+---
 
-### 중기 (1-2개월)
-- [ ] AI 기반 이벤트 감지
-- [ ] 클라우드 백업 시스템
-- [ ] 원격 제어 API
+## 🔮 향후 개발 계획
 
-### 장기 (3-6개월)
-- [ ] 다중 라즈베리파이 연동
+### 단기 개선사항 (1-2주)
+- [ ] 통합 웹 대시보드 (CCTV + 모션감지 상태)
+- [ ] 모바일 반응형 UI 개선
+- [ ] 알림 시스템 (이메일, 웹훅)
+- [ ] 영상 썸네일 생성
+
+### 중기 개발 (1-2개월)
+- [ ] AI 기반 객체 감지 (사람/동물 구분)
+- [ ] 클라우드 백업 연동
+- [ ] 다중 클라이언트 지원 (읽기 전용)
+- [ ] REST API 확장
+
+### 장기 비전 (3-6개월)
+- [ ] 다중 라즈베리파이 클러스터
 - [ ] 중앙 관제 시스템
-- [ ] 빅데이터 분석 플랫폼
+- [ ] 머신러닝 기반 이상 행동 감지
+- [ ] 음성/소음 감지 추가
 
-## ⚠️ 주의사항
+---
 
-### 하드웨어 제약
-- 라즈베리파이 5는 H.264 하드웨어 인코딩 지원
-- VideoCore VII GPU를 통한 효율적 인코딩
-- 듀얼 1080p 동시 녹화 시 CPU ~40% 사용
+## 📚 참고 자료 및 의존성
 
-### 안정성 고려사항
-- 24/7 운영 시 방열 필수
-- SD 카드 수명 관리 (산업용 SD 권장)
-- 정기적인 시스템 재시작 권장 (주 1회)
+### 외부 라이브러리
+```python
+# requirements.txt
+fastapi>=0.104.0
+uvicorn>=0.24.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+pillow>=10.0.0
+psutil>=5.9.0
+```
 
-## 📚 참고 자료
+### 시스템 패키지
+```bash
+sudo apt install -y rpicam-apps ffmpeg python3-opencv
+```
 
+### 참고 문서
 - [Raspberry Pi Camera Documentation](https://www.raspberrypi.com/documentation/computers/camera_software.html)
-- [rpicam-apps GitHub](https://github.com/raspberrypi/rpicam-apps)
-- [V4L2 API Documentation](https://www.kernel.org/doc/html/latest/userspace-api/media/v4l/v4l2.html)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [OpenCV Python Tutorials](https://docs.opencv.org/4.x/d6/d00/tutorial_py_root.html)
+- [ffmpeg Documentation](https://ffmpeg.org/documentation.html)
+
+### 코딩 컨벤션
+- **Python**: PEP 8 준수
+- **함수명**: snake_case
+- **클래스명**: PascalCase
+- **상수**: UPPER_CASE
+- **주석**: 한국어 + 영어 혼용
+
+### Git 워크플로우
+```bash
+# 기능 브랜치
+git checkout -b feature/new-detection-algorithm
+git commit -m "feat: implement advanced motion detection"
+git push origin feature/new-detection-algorithm
+```
+
+---
 
 ## 🤝 기여 가이드
 
 ### 코드 기여
-1. 기능 브랜치 생성: `feature/기능명`
-2. 커밋 메시지: `[타입] 설명` (feat, fix, docs, refactor)
-3. PR 생성 시 상세 설명 필수
+1. 이슈 생성 및 논의
+2. 기능 브랜치 생성
+3. 코드 작성 및 테스트
+4. 문서 업데이트
+5. Pull Request 생성
 
 ### 문서 기여
-- 기술 문서는 CLAUDE.md에 추가
-- 사용자 가이드는 README.md에 추가
-- 예제 코드와 실행 결과 포함
-- 아래 4개의 문서 외에 새로운 문서 작성 금지!
-├── README.md             # 사용자 가이드 (현재 문서)
-├── CLAUDE.md             # 개발자 기술 문서
-├── PRD.md                # 제품 요구사항 문서
-├── QUICK_START.md        # 빠른 시작 가이드
+- **PRD.md**: 제품 요구사항 및 아키텍처
+- **README.md**: 사용자 가이드 및 설치 방법
+- **CLAUDE.md**: 개발자 기술 문서 (현재 파일)
 
-## 📞 문의 및 지원
+### 테스트 가이드
+```bash
+# CCTV 시스템 테스트
+curl -I http://localhost:8001/stream  # 스트림 응답 확인
+curl http://localhost:8001/api/stats  # 통계 API 테스트
 
-- 기술 문의: 이 문서 참조
-- 버그 리포트: GitHub Issues 활용
-- 긴급 지원: 시스템 관리자 연락
+# 모션 감지 테스트  
+python3 -c "
+import detection_cam0
+config = detection_cam0.Config()
+print(config.get_sensitivity_info())
+"
+```
+
+이 문서는 지속적으로 업데이트되며, 최신 버전은 항상 Git 저장소의 main 브랜치에서 확인할 수 있습니다.

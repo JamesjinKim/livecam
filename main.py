@@ -7,7 +7,9 @@ import subprocess
 import signal
 import asyncio
 import time
-from fastapi import FastAPI, HTTPException
+import atexit
+import sys
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
 import uvicorn
 
@@ -21,6 +23,10 @@ stream_stats = {
     0: {"frame_count": 0, "avg_frame_size": 0, "fps": 0, "last_update": 0},
     1: {"frame_count": 0, "avg_frame_size": 0, "fps": 0, "last_update": 0}
 }
+
+# 단일 클라이언트 제한
+active_clients = set()  # 활성 클라이언트 IP 집합
+MAX_CLIENTS = 1  # 최대 1개 클라이언트
 
 # 해상도 설정
 RESOLUTIONS = {
@@ -91,7 +97,21 @@ def stop_camera_stream(camera_id: int):
         except Exception as e:
             print(f"⚠️ Error stopping camera {camera_id}: {e}")
 
-def generate_mjpeg_stream(camera_id: int):
+def cleanup_all_processes():
+    """모든 카메라 프로세스 정리"""
+    print("🧹 Cleanup: Stopping all camera processes...")
+    for camera_id in list(camera_processes.keys()):
+        stop_camera_stream(camera_id)
+    print("✅ All camera processes cleaned up")
+
+def signal_handler(signum, frame):
+    """신호 핸들러 - SIGINT/SIGTERM 처리"""
+    print(f"\n🛑 Received signal {signum} (Ctrl+C), cleaning up...")
+    cleanup_all_processes()
+    print("👋 Server shutdown complete")
+    sys.exit(0)
+
+def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
     """해상도별 최적화된 MJPEG 스트림 생성"""
     if camera_id not in camera_processes:
         return
@@ -127,6 +147,11 @@ def generate_mjpeg_stream(camera_id: int):
     
     print(f"🎬 Starting {current_resolution} stream for camera {camera_id}")
     print(f"📊 Buffer config: {buffer_limit//1024}KB limit, {chunk_size//1024}KB chunks")
+    
+    # 클라이언트 등록
+    if client_ip:
+        active_clients.add(client_ip)
+        print(f"👥 Client connected: {client_ip} (Total: {len(active_clients)})")
     
     try:
         while True:
@@ -204,6 +229,10 @@ def generate_mjpeg_stream(camera_id: int):
     except Exception as e:
         print(f"❌ Stream error for camera {camera_id}: {e}")
     finally:
+        # 클라이언트 연결 종료
+        if client_ip and client_ip in active_clients:
+            active_clients.remove(client_ip)
+            print(f"🚫 Client disconnected: {client_ip} (Remaining: {len(active_clients)})")
         print(f"⏹️ Camera {camera_id} ({current_resolution}) stream ended (total: {frame_count} frames)")
         # 스트림 종료 시 통계 초기화
         if camera_id in stream_stats:
@@ -304,6 +333,16 @@ async def root():
                 color: white;
                 border: 1px solid #28a745;
             }
+            .shutdown-btn {
+                background: #dc3545;
+                color: white;
+                border: 1px solid #dc3545;
+                font-weight: bold;
+            }
+            .shutdown-btn:hover {
+                background: #c82333;
+                border: 1px solid #c82333;
+            }
             .video-container {
                 margin: 20px 0;
                 border: 2px solid #ddd;
@@ -397,6 +436,13 @@ async def root():
                         📺 720p (1280×720)
                     </button>
                 </div>
+                
+                <div class="control-section">
+                    <h3>시스템 제어</h3>
+                    <button class="shutdown-btn" onclick="shutdownSystem()">
+                        🛑 서비스 종료
+                    </button>
+                </div>
             </div>
             
             <div class="video-container resolution-640" id="video-container">
@@ -459,6 +505,26 @@ async def root():
                     });
             }
             
+            function shutdownSystem() {
+                if (confirm('🛑 서비스를 종료하시겠습니까?\n\n모든 카메라 스트림이 중지되고 서버가 종료됩니다.')) {
+                    document.getElementById('stream-status').textContent = '서비스 종료 중...';
+                    
+                    fetch('/api/shutdown', { method: 'POST' })
+                        .then(response => {
+                            if (response.ok) {
+                                alert('✅ 서비스가 정상 종료되었습니다.\n브라우저를 닫으셔도 됩니다.');
+                                document.body.innerHTML = '<div style="text-align:center;padding:50px;font-size:18px;">🛑 서비스 종료 완료<br><br>브라우저를 닫으셔도 됩니다.</div>';
+                            } else {
+                                throw new Error('서버 응답 오류');
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Shutdown error:', error);
+                            alert('⚠️ 종료 요청 실패. 터미널에서 Ctrl+C로 종료해주세요.');
+                        });
+                }
+            }
+            
             function updateStats() {
                 fetch('/api/stats')
                     .then(response => response.json())
@@ -512,10 +578,46 @@ async def root():
             
             // 스트림 오류 시 재시도
             document.getElementById('video-stream').onerror = function() {
+                console.log('Stream error occurred, retrying...');
                 setTimeout(() => {
                     this.src = `/stream?t=${Date.now()}`;
                 }, 2000);
             };
+            
+            // 스트림 로드 오류 처리 (423 Locked 등)
+            document.getElementById('video-stream').onload = function() {
+                document.getElementById('stream-status').style.display = 'block';
+            };
+            
+            // 스트림 연결 상태 체크
+            function checkStreamConnection() {
+                const img = document.getElementById('video-stream');
+                const status = document.getElementById('stream-status');
+                
+                if (img.complete && img.naturalHeight !== 0) {
+                    status.textContent = '스트리밍 중';
+                    status.style.color = '#28a745';
+                } else {
+                    // 423 에러 체크
+                    fetch('/stream', { method: 'HEAD' })
+                        .then(response => {
+                            if (response.status === 423) {
+                                status.textContent = '❌ 다른 사용자가 스트리밍 중입니다';
+                                status.style.color = '#dc3545';
+                            } else {
+                                status.textContent = '연결 대기 중';
+                                status.style.color = '#6c757d';
+                            }
+                        })
+                        .catch(() => {
+                            status.textContent = '연결 오류';
+                            status.style.color = '#dc3545';
+                        });
+                }
+            }
+            
+            // 3초마다 연결 상태 체크
+            setInterval(checkStreamConnection, 3000);
             
             // 페이지 로드 시 통계 업데이트 시작
             document.addEventListener('DOMContentLoaded', function() {
@@ -634,6 +736,56 @@ async def change_resolution(resolution: str):
         print(f"✅ Resolution set to {resolution} (will apply when camera starts)")
         return {"success": True, "message": f"Resolution set to {resolution}"}
 
+@app.get("/stream")
+async def video_stream(request: Request):
+    """비디오 스트림 - 단일 클라이언트 제한"""
+    client_ip = request.client.host
+    
+    # 단일 클라이언트 제한 확인
+    if len(active_clients) >= MAX_CLIENTS and client_ip not in active_clients:
+        print(f"🚫 Stream request rejected: {client_ip} (Max clients: {MAX_CLIENTS})")
+        raise HTTPException(
+            status_code=423,  # Locked
+            detail=f"Maximum {MAX_CLIENTS} client(s) allowed. Another client is currently streaming."
+        )
+    
+    print(f"🌐 Stream request for camera {current_camera}")
+    
+    # 현재 카메라가 시작되지 않았으면 시작
+    if current_camera not in camera_processes:
+        success = start_camera_stream(current_camera)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to start camera")
+    
+    return StreamingResponse(
+        generate_mjpeg_stream(current_camera, client_ip),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+@app.post("/api/shutdown")
+async def shutdown_system():
+    """시스템 안전 종료"""
+    print("🛑 System shutdown requested via web interface")
+    
+    # 모든 카메라 프로세스 정리
+    for camera_id in list(camera_processes.keys()):
+        print(f"🧹 Stopping camera {camera_id}...")
+        stop_camera_stream(camera_id)
+    
+    print("✅ All cameras stopped. Server will shutdown...")
+    
+    # 비동기적으로 서버 종료 (응답 후에 종료)
+    import threading
+    def delayed_shutdown():
+        import time
+        time.sleep(1)  # 응답 전송 대기
+        import os
+        os._exit(0)  # 강제 종료
+    
+    threading.Thread(target=delayed_shutdown, daemon=True).start()
+    
+    return {"success": True, "message": "System shutting down..."}
+
 @app.on_event("startup")
 async def startup_event():
     """서버 시작 시 초기화"""
@@ -647,12 +799,29 @@ async def shutdown_event():
         stop_camera_stream(camera_id)
 
 if __name__ == "__main__":
+    # 신호 핸들러 등록
+    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # 종료 신호
+    
+    # atexit 핸들러 등록 (추가 안전장치)
+    atexit.register(cleanup_all_processes)
+    
     print("🚀 Starting simple toggle camera server on port 8001")
     print("🎯 Access web interface at: http://<your-pi-ip>:8001")
+    print("🛡️ Signal handlers registered for clean shutdown")
     
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8001,
-        log_level="info"
-    )
+    try:
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=8001,
+            log_level="info"
+        )
+    except KeyboardInterrupt:
+        print("\n🛑 Keyboard interrupt received")
+        cleanup_all_processes()
+    except Exception as e:
+        print(f"❌ Server error: {e}")
+        cleanup_all_processes()
+    finally:
+        print("👋 Server shutdown complete")
