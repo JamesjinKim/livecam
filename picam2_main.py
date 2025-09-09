@@ -21,6 +21,8 @@ import uvicorn
 # Picamera2 imports
 try:
     from picamera2 import Picamera2
+    from libcamera import Transform
+    import libcamera
 except ImportError as e:
     print(f"[ERROR] Picamera2 not installed: {e}")
     print("[INSTALL] Run: sudo apt install -y python3-picamera2")
@@ -84,17 +86,18 @@ def start_camera_stream(camera_id: int, resolution: str = None):
         # Picamera2 인스턴스 생성
         picam2 = Picamera2(camera_num=camera_id)
         
-        # Pi5 최적화 설정
+        # Pi5 최적화 설정 (좌우 반전 포함)
         config = picam2.create_video_configuration(
             main={
                 "size": (width, height),
                 "format": "YUV420"  # Pi5 GPU 최적화 포맷
             },
+            transform=libcamera.Transform(hflip=True),  # 좌우 반전 (거울 모드)
             buffer_count=4,  # Pi5 메모리 대역폭 활용
             queue=False      # 레이턴시 최소화
         )
         
-        # Pi5 PiSP 설정
+        # Pi5 PiSP 설정 (좌우 반전 추가)
         picam2.set_controls({
             "AwbEnable": True,           # 자동 화이트밸런스
             "AeEnable": True,            # 자동 노출
@@ -102,6 +105,7 @@ def start_camera_stream(camera_id: int, resolution: str = None):
             "Saturation": 1.1,           # 색상 포화도
             "Brightness": 0.0,           # 기본 밝기
             "Contrast": 1.0,             # 기본 대비
+            "ScalerCrop": [0, 0, width, height],  # 크롭 영역 설정
         })
         
         picam2.configure(config)
@@ -508,7 +512,7 @@ async def root():
     </head>
     <body>
         <div class="container">
-            <h1>🚀 Picamera2 듀얼 카메라 토글 <span class="badge">Pi5 GPU 가속</span></h1>
+            <h1>Picamera2 듀얼 카메라 토글 <span class="badge">Pi5 GPU 가속</span></h1>
             
             <div class="status">
                 <div class="status-grid">
@@ -579,7 +583,7 @@ async def root():
                 <img id="video-stream" src="/stream" alt="Picamera2 Live Stream">
             </div>
             
-            <p>🚀 Picamera2 + Pi5 VideoCore VII GPU 하드웨어 가속</p>
+            <p>Picamera2 + Pi5 VideoCore VII GPU 하드웨어 가속</p>
         </div>
         
         <script>
