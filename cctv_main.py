@@ -171,16 +171,18 @@ def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
                 
             buffer.extend(chunk)
             
-            # 동적 버퍼 크기 제한
+            # 동적 버퍼 크기 제한 - 인플레이스 삭제로 메모리 최적화
             if len(buffer) > buffer_limit:
-                buffer = buffer[-buffer_keep:]
+                excess = len(buffer) - buffer_keep
+                del buffer[:excess]  # 인플레이스 삭제로 새 객체 생성 방지
             
             # JPEG 프레임 찾기
             while True:
                 start_idx = buffer.find(b'\xff\xd8')
                 if start_idx == -1:
                     if len(buffer) > cleanup_threshold:
-                        buffer = buffer[-cleanup_keep:]
+                        excess = len(buffer) - cleanup_keep
+                        del buffer[:excess]  # 인플레이스 삭제로 메모리 최적화
                     break
                     
                 end_idx = buffer.find(b'\xff\xd9', start_idx + 2)
@@ -205,6 +207,17 @@ def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
                         
                         frame_count += 1
                         total_frame_size += frame_size
+                        
+                        # 프레임 카운터 자동 리셋 (10만 프레임마다 = 약 55분)
+                        if frame_count >= 100000:
+                            print(f"🔄 Auto-reset: Frame counter reached 100K, resetting for memory stability")
+                            frame_count = 1  # 나누기 오류 방지를 위해 1로 설정
+                            total_frame_size = frame_size
+                            start_time = time.time()
+                            last_fps_update = start_time
+                            last_gc_time = start_time
+                            # 통계 초기화
+                            stream_stats[camera_id] = {"frame_count": 1, "avg_frame_size": frame_size, "fps": 30.0, "last_update": start_time}
                         
                         # FPS 및 통계 업데이트 (매초마다)
                         current_time = time.time()
@@ -868,6 +881,37 @@ async def get_stream_stats():
         "quality": "80%",
         "stats": stream_stats[current_camera] if current_camera in stream_stats else {}
     }
+
+@app.post("/api/reset-stats")
+async def reset_stream_stats():
+    """수동 통계 리셋 API - 스트림 중단 없이 통계만 초기화"""
+    global stream_stats
+    
+    # 현재 활성 카메라의 통계만 리셋
+    if current_camera in stream_stats:
+        stream_stats[current_camera] = {
+            "frame_count": 0, 
+            "avg_frame_size": 0, 
+            "fps": 0.0, 
+            "last_update": time.time()
+        }
+        print(f"📊 Manual stats reset for camera {current_camera}")
+        
+        # 강제 가비지 컬렉션
+        import gc
+        gc.collect()
+        
+        return {
+            "success": True, 
+            "message": f"Statistics reset for camera {current_camera}",
+            "reset_time": time.time()
+        }
+    else:
+        return {
+            "success": False, 
+            "message": "No active camera to reset",
+            "current_camera": current_camera
+        }
 
 @app.post("/api/resolution/{resolution}")
 async def change_resolution(resolution: str):
