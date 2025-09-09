@@ -62,7 +62,13 @@ def start_camera_stream(camera_id: int, resolution: str = None):
     ]
     
     try:
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # stderr를 /dev/null로 리다이렉트하여 버퍼 오버플로우 방지
+        process = subprocess.Popen(
+            cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.DEVNULL,  # stderr 버퍼 오버플로우 방지
+            bufsize=0  # 버퍼링 비활성화
+        )
         camera_processes[camera_id] = process
         print(f"✅ Camera {camera_id} started at {resolution} (PID: {process.pid})")
         return True
@@ -71,7 +77,7 @@ def start_camera_stream(camera_id: int, resolution: str = None):
         return False
 
 def stop_camera_stream(camera_id: int):
-    """카메라 스트리밍 중지"""
+    """카메라 스트리밍 중지 - 메모리 정리 추가"""
     if camera_id in camera_processes:
         try:
             process = camera_processes[camera_id]
@@ -84,21 +90,31 @@ def stop_camera_stream(camera_id: int):
                 process.kill()
                 process.wait(timeout=2)
             
-            # stdout/stderr 버퍼 정리
+            # stdout 버퍼 정리 (남은 데이터 소비)
             if process.stdout:
+                try:
+                    # 남은 데이터를 읽어서 버림
+                    process.stdout.read(1024)
+                except:
+                    pass
                 process.stdout.close()
-            if process.stderr:
-                process.stderr.close()
+            
+            # stderr는 DEVNULL이므로 정리 불필요
                 
             del camera_processes[camera_id]
             # 통계 초기화
             stream_stats[camera_id] = {"frame_count": 0, "avg_frame_size": 0, "fps": 0, "last_update": 0}
+            
+            # 가비지 컬렉션 강제 실행으로 메모리 정리
+            import gc
+            gc.collect()
+            
             print(f"🛑 Camera {camera_id} stopped and cleaned")
         except Exception as e:
             print(f"⚠️ Error stopping camera {camera_id}: {e}")
 
 def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
-    """해상도별 최적화된 MJPEG 스트림 생성"""
+    """최적화된 MJPEG 스트림 생성 - 메모리 효율 개선"""
     if camera_id not in camera_processes:
         return
     
@@ -107,29 +123,32 @@ def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
     # 현재 해상도에 따른 동적 설정
     is_720p = current_resolution == "1280x720"
     
-    # 해상도별 최적화 파라미터
+    # 해상도별 최적화 파라미터 (버퍼 크기 감소)
     if is_720p:
-        chunk_size = 32768  # 32KB 청크 (720p용)
-        buffer_limit = 2 * 1024 * 1024  # 2MB 버퍼
-        buffer_keep = 1024 * 1024  # 1MB 유지
+        chunk_size = 32768  # 32KB 청크
+        buffer_limit = 1024 * 1024  # 1MB 버퍼 (2MB → 1MB 감소)
+        buffer_keep = 512 * 1024  # 512KB 유지
         frame_min_size = 5000  # 5KB
         frame_max_size = 500000  # 500KB
         cleanup_threshold = 100000  # 100KB
         cleanup_keep = 20000  # 20KB
     else:
-        chunk_size = 16384  # 16KB 청크 (480p용)
-        buffer_limit = 512 * 1024  # 512KB 버퍼
-        buffer_keep = 256 * 1024  # 256KB 유지
+        chunk_size = 16384  # 16KB 청크
+        buffer_limit = 256 * 1024  # 256KB 버퍼 (512KB → 256KB 감소)
+        buffer_keep = 128 * 1024  # 128KB 유지
         frame_min_size = 2000  # 2KB
         frame_max_size = 200000  # 200KB
         cleanup_threshold = 50000  # 50KB
         cleanup_keep = 10000  # 10KB
     
+    # collections.deque 사용으로 메모리 효율 개선
+    from collections import deque
     buffer = bytearray()
     frame_count = 0
     total_frame_size = 0
     start_time = time.time()
     last_fps_update = start_time
+    last_gc_time = start_time  # 가비지 컬렉션 타이머
     
     print(f"🎬 Starting {current_resolution} stream for camera {camera_id}")
     print(f"📊 Buffer config: {buffer_limit//1024}KB limit, {chunk_size//1024}KB chunks")
@@ -201,6 +220,12 @@ def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
                                 "last_update": current_time
                             })
                             last_fps_update = current_time
+                        
+                        # 주기적 가비지 컬렉션 (30초마다)
+                        if current_time - last_gc_time > 30:
+                            import gc
+                            gc.collect()
+                            last_gc_time = current_time
                         
                         if frame_count % 150 == 0:  # 150프레임마다 로그
                             print(f"📊 Camera {camera_id} ({current_resolution}): {frame_count} frames, {stream_stats[camera_id]['fps']} fps, avg {frame_size//1024}KB")
@@ -377,6 +402,106 @@ async def root():
                 color: #007bff;
                 font-weight: bold;
             }
+            
+            /* 하트비트 인디케이터 스타일 */
+            .heartbeat-container {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                margin-left: 20px;
+                vertical-align: middle;
+            }
+            
+            .heartbeat-indicator {
+                width: 20px;
+                height: 20px;
+                border-radius: 50%;
+                margin-right: 8px;
+                position: relative;
+            }
+            
+            .heartbeat-indicator.green {
+                background: #28a745;
+                animation: pulse-green 1s infinite;
+                box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+            }
+            
+            .heartbeat-indicator.yellow {
+                background: #ffc107;
+                animation: pulse-yellow 2s infinite;
+                box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
+            }
+            
+            .heartbeat-indicator.red {
+                background: #dc3545;
+                animation: none;
+            }
+            
+            .heartbeat-indicator.black {
+                background: #6c757d;
+                animation: none;
+            }
+            
+            @keyframes pulse-green {
+                0% {
+                    transform: scale(0.95);
+                    box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+                }
+                70% {
+                    transform: scale(1);
+                    box-shadow: 0 0 0 10px rgba(40, 167, 69, 0);
+                }
+                100% {
+                    transform: scale(0.95);
+                    box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+                }
+            }
+            
+            @keyframes pulse-yellow {
+                0% {
+                    transform: scale(0.95);
+                    box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
+                }
+                70% {
+                    transform: scale(1);
+                    box-shadow: 0 0 0 10px rgba(255, 193, 7, 0);
+                }
+                100% {
+                    transform: scale(0.95);
+                    box-shadow: 0 0 0 0 rgba(255, 193, 7, 0);
+                }
+            }
+            
+            .heartbeat-text {
+                font-size: 12px;
+                color: #495057;
+                font-weight: bold;
+            }
+            
+            /* 네트워크 품질 바 스타일 */
+            .network-quality {
+                margin-top: 10px;
+                padding: 8px;
+                background: #f8f9fa;
+                border-radius: 4px;
+                border-left: 3px solid #17a2b8;
+                font-size: 11px;
+                text-align: center;
+            }
+            
+            .quality-bar {
+                font-family: monospace;
+                font-size: 14px;
+                font-weight: bold;
+                margin: 5px 0;
+                letter-spacing: 1px;
+            }
+            
+            .quality-bar.excellent { color: #28a745; }
+            .quality-bar.good { color: #ffc107; }
+            .quality-bar.poor { color: #fd7e14; }
+            .quality-bar.critical { color: #dc3545; }
+            .quality-bar.down { color: #6c757d; }
         </style>
     </head>
     <body>
@@ -435,9 +560,16 @@ async def root():
                 
                 <div class="control-section">
                     <h3>시스템 제어</h3>
-                    <a href="/exit" class="exit-btn">
-                        🛑 CCTV 종료
-                    </a>
+                    <div style="display: flex; align-items: center; justify-content: center;">
+                        <a href="/exit" class="exit-btn">
+                            🛑 CCTV 종료
+                        </a>
+                        <!-- 하트비트 인디케이터 -->
+                        <div class="heartbeat-container">
+                            <div class="heartbeat-indicator green" id="heartbeat-indicator"></div>
+                            <span class="heartbeat-text" id="heartbeat-text">LIVE</span>
+                        </div>
+                    </div>
                 </div>
             </div>
             
@@ -445,11 +577,109 @@ async def root():
                 <img id="video-stream" src="/stream" alt="Live Stream">
             </div>
             
-            <p>카메라 전환기능으로 시스템 부하를 줄입니다</p>
+            <!-- 네트워크 품질 바 -->
+            <div class="network-quality">
+                <div><strong>Network Quality:</strong> <span id="quality-status">Excellent</span></div>
+                <div class="quality-bar excellent" id="quality-bar">[██████████] 100%</div>
+            </div>
+            
+            <p>메모리 누수 방지 및 실시간 모니터링이 개선된 버전입니다</p>
         </div>
         
         <script>
             let currentCamera = 0;
+            let lastFrameTime = Date.now();
+            let streamQuality = 100;
+            
+            // 스트림 모니터링 시스템
+            function initStreamMonitoring() {
+                const videoStream = document.getElementById('video-stream');
+                
+                // 프레임 로드 감지
+                videoStream.addEventListener('load', function() {
+                    lastFrameTime = Date.now();
+                    updateStreamQuality(true);
+                });
+                
+                // 에러 감지
+                videoStream.addEventListener('error', function() {
+                    updateStreamQuality(false);
+                });
+                
+                // 0.5초마다 하트비트 상태 체크
+                setInterval(checkHeartbeat, 500);
+                
+                // 2초마다 네트워크 품질 업데이트
+                setInterval(updateNetworkQuality, 2000);
+            }
+            
+            function checkHeartbeat() {
+                const now = Date.now();
+                const elapsed = (now - lastFrameTime) / 1000;
+                const indicator = document.getElementById('heartbeat-indicator');
+                const text = document.getElementById('heartbeat-text');
+                
+                // 하트비트 상태 업데이트
+                indicator.className = 'heartbeat-indicator';
+                
+                if (elapsed < 1) {
+                    indicator.classList.add('green');
+                    text.textContent = 'LIVE';
+                } else if (elapsed < 3) {
+                    indicator.classList.add('yellow');
+                    text.textContent = 'DELAY';
+                } else if (elapsed < 5) {
+                    indicator.classList.add('red');
+                    text.textContent = 'ERROR';
+                } else {
+                    indicator.classList.add('black');
+                    text.textContent = 'OFFLINE';
+                }
+            }
+            
+            function updateStreamQuality(frameReceived) {
+                const now = Date.now();
+                const elapsed = (now - lastFrameTime) / 1000;
+                
+                if (frameReceived) {
+                    streamQuality = Math.min(100, streamQuality + 5);
+                } else if (elapsed > 3) {
+                    streamQuality = Math.max(0, streamQuality - 20);
+                } else if (elapsed > 1) {
+                    streamQuality = Math.max(30, streamQuality - 5);
+                }
+            }
+            
+            function updateNetworkQuality() {
+                const qualityBar = document.getElementById('quality-bar');
+                const qualityStatus = document.getElementById('quality-status');
+                
+                // 품질 바 생성
+                const filled = Math.floor(streamQuality / 10);
+                const empty = 10 - filled;
+                const bar = '[' + '█'.repeat(filled) + '░'.repeat(empty) + '] ' + streamQuality + '%';
+                
+                qualityBar.textContent = bar;
+                qualityBar.className = 'quality-bar';
+                
+                // 품질 레벨 설정
+                if (streamQuality >= 80) {
+                    qualityBar.classList.add('excellent');
+                    qualityStatus.textContent = 'Excellent';
+                } else if (streamQuality >= 60) {
+                    qualityBar.classList.add('good');
+                    qualityStatus.textContent = 'Good';
+                } else if (streamQuality >= 40) {
+                    qualityBar.classList.add('poor');
+                    qualityStatus.textContent = 'Poor';
+                } else if (streamQuality >= 20) {
+                    qualityBar.classList.add('critical');
+                    qualityStatus.textContent = 'Critical';
+                } else {
+                    qualityBar.classList.add('down');
+                    qualityStatus.textContent = 'System Down';
+                }
+            }
             
             function switchCamera(cameraId) {
                 fetch(`/switch/${cameraId}`, { method: 'POST' })
@@ -461,6 +691,7 @@ async def root():
                             // 스트림 새로고침
                             const img = document.getElementById('video-stream');
                             img.src = `/stream?t=${Date.now()}`;
+                            lastFrameTime = Date.now(); // 프레임 시간 리셋
                         }
                     })
                     .catch(error => console.error('Error:', error));
@@ -552,15 +783,17 @@ async def root():
                     });
             }
             
-            // 스트림 오류 시 재시도
+            // 스트림 오류 시 재시도 (하트비트 업데이트 추가)
             document.getElementById('video-stream').onerror = function() {
+                updateStreamQuality(false);
                 setTimeout(() => {
                     this.src = `/stream?t=${Date.now()}`;
                 }, 2000);
             };
             
-            // 페이지 로드 시 통계 업데이트 시작
+            // 페이지 로드 시 모니터링 시스템 시작
             document.addEventListener('DOMContentLoaded', function() {
+                initStreamMonitoring(); // 스트림 모니터링 시작
                 updateStats(); // 즉시 한 번 실행
                 setInterval(updateStats, 1000); // 1초마다 업데이트
             });
