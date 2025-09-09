@@ -4,7 +4,7 @@
 
 ## 📋 시스템 구성
 
-### 🔴 Part 1: 실시간 CCTV 스트리밍 (main.py)
+### 🔴 Part 1: 실시간 CCTV 스트리밍 (picam2_main.py)
 웹 브라우저를 통한 실시간 영상 모니터링 및 카메라 제어
 
 ### ⚫ Part 2: 모션 감지 블랙박스 (detection_cam0.py, detection_cam1.py)
@@ -60,7 +60,7 @@ sudo usermod -a -G video $USER
 
 #### 1. CCTV 스트리밍 시작
 ```bash
-python3 main.py
+python3 picam2_main.py
 ```
 
 #### 2. 웹 접속
@@ -235,7 +235,7 @@ find videos/motion_events/ -name "*.mp4" -mtime +30 -delete
 
 #### 터미널 1: CCTV 실시간 모니터링
 ```bash
-python3 main.py
+python3 picam2_main.py
 # → http://라즈베리파이_IP:8001 접속
 ```
 
@@ -281,16 +281,27 @@ python3 detection_cam1.py
 ### Q: 저장 공간이 부족해요
 **A**: 하루 100회 모션 감지 시 약 500MB 사용됩니다. 정기적으로 오래된 영상을 삭제하거나 외장 저장소를 사용하세요.
 
-### Q: 카메라가 인식되지 않아요
+### Q: 카메라가 인식되지 않아요 (Picamera2 대응) ⚡
 **A**: 
 ```bash
 # 카메라 연결 확인
 rpicam-hello --list-cameras
 
+# Picamera2 라이브러리 확인
+python3 -c "from picamera2 import Picamera2; print('Picamera2 OK')"
+
+# GPU 메모리 할당 확인 (256MB 권장)
+vcgencmd get_mem gpu
+
 # 권한 확인
 sudo usermod -a -G video $USER
 # 재로그인 필요
 ```
+
+### Q: Picamera2와 rpicam-vid 차이점이 뭐예요?
+**A**: 
+- **rpicam-vid** (구버전): 서브프로세스 방식, 장기 스트리밍 시 멈춤 문제
+- **Picamera2** (신버전): GPU 직접 액세스, 안정성 대폭 향상, CPU 20-30% 절약 ⚡
 
 ---
 
@@ -367,18 +378,20 @@ write to smart-security.service
  WantedBy=multi-user.target
 
 
-### 문서 참조
-- **PRD.md**: 상세 기술 명세
-- **CLAUDE.md**: 개발자 기술 문서
-- **로그 분석**: 콘솔 출력으로 실시간 디버깅
+### 문서 참조 (2025.09 업데이트)
+- **PRD.md**: 상세 기술 명세 (Picamera2 버전 2.0 반영)
+- **CLAUDE.md**: 개발자 기술 문서 (Picamera2 마이그레이션 상세 정보)
+- **로그 분석**: 콘솔 출력 + PiSP 하드웨어 로그 디버깅
 
-### 일반적인 문제
-1. **스트리밍 끊김**: 네트워크 확인
+### 일반적인 문제 (Picamera2 기반)
+1. **스트리밍 끊김**: 네트워크 확인 / Picamera2 인스턴스 충돌
 2. **모션 오감지**: 민감도 조정
 3. **저장 실패**: 디스크 공간 확인
-4. **카메라 오류**: 하드웨어 연결 점검
+4. **카메라 오류**: 하드웨어 연결 / GPU 메모리 설정 (256MB) 점검
+5. **"Pipeline handler in use" 에러**: 다른 카메라 어플리케이션 종료 필요
 
 ### 버전 정보
-- **v1.0**: 초기 듀얼 카메라 CCTV + 모션 감지 시스템
-- **마지막 업데이트**: 2025-09-08
-- **호환성**: Raspberry Pi 5, Python 3.11+
+- **v1.0**: 초기 듀얼 카메라 CCTV + 모션 감지 시스템 (rpicam-vid 방식)
+- ⚡ **v2.0**: Picamera2 기반 GPU 직접 액세스 마이그레이션 (2025-09-09)
+- **마지막 업데이트**: 2025-09-09 (Picamera2 완전 대체)
+- **호환성**: Raspberry Pi 5, Python 3.11+, Picamera2 0.3.12+

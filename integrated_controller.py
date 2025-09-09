@@ -17,13 +17,13 @@ import uvicorn
 app = FastAPI()
 
 # 전역 변수
-toggle_streaming_process = None  # 기존 cctv_main.py (포트 8001)
+toggle_streaming_process = None  # 기존 picam2_main.py (포트 8001)
 detection_cam0_process = None    # detection_cam0.py
 detection_cam1_process = None    # detection_cam1.py
 
 # 프로세스 관리
 def start_toggle_streaming():
-    """기존 토글 스트리밍 시작 (cctv_main.py)"""
+    """기존 토글 스트리밍 시작 (picam2_main.py)"""
     global toggle_streaming_process
     
     if toggle_streaming_process and toggle_streaming_process.poll() is None:
@@ -31,8 +31,8 @@ def start_toggle_streaming():
         return True
     
     try:
-        # cctv_main.py 실행 (포트 8001)
-        cmd = ["python3", "/home/shinho/shinho/livecam/cctv_main.py"]
+        # picam2_main.py 실행 (포트 8001)
+        cmd = ["python3", "/home/shinho/shinho/livecam/picam2_main.py"]
         toggle_streaming_process = subprocess.Popen(cmd, 
                                                    stdout=subprocess.PIPE, 
                                                    stderr=subprocess.PIPE)
@@ -363,7 +363,7 @@ async def root():
                     </h2>
                     
                     <div class="description">
-                        cctv_main.py 시스템 <br>
+                        picam2_main.py 시스템 <br>
                         카메라 0번 ↔ 카메라 1번 교차 스트리밍<br>
                         웹 UI로 카메라 토글 가능<br>
                         포트: 8001<br>
@@ -419,7 +419,7 @@ async def root():
             
             <div style="text-align: center; margin-top: 40px; color: #6c757d;">
                 <p><strong>시스템 구성:</strong></p>
-                <p>토글 스트리밍: cctv_main.py (카메라 0↔1 교차)</p>
+                <p>토글 스트리밍: picam2_main.py (카메라 0↔1 교차)</p>
                 <p>모션 감지 블랙박스: 새로운 기능 (카메라 0,1 동시 감지)</p>
                 <p>독립 실행: 두 시스템은 서로 간섭 없이 동시 동작 가능</p>
                 <p>주의사항: 토글 스트리밍은 1개 클라이언트만 접속 가능</p>
@@ -713,7 +713,7 @@ async def auto_switch_to_detection():
 async def startup_event():
     """서버 시작 시 초기 설정"""
     print("🚀 통합 제어 시스템 시작")
-    print("   토글 스트리밍 (cctv_main.py) + 모션 감지 시스템 (detection_cam0.py, detection_cam1.py)")
+    print("   토글 스트리밍 (picam2_main.py) + 모션 감지 시스템 (detection_cam0.py, detection_cam1.py)")
     
     # 기본적으로 detection 시스템만 자동 시작
     print("🛡️ 모션 감지 시스템 자동 시작...")
@@ -733,7 +733,7 @@ if __name__ == "__main__":
     print("")
     print("🔄 서비스 구성:")
     print("   • 통합 제어: 포트 8080 (이 서버)")
-    print("   • 토글 스트리밍: 포트 8001 (cctv_main.py - 1 클라이언트 권장)")
+    print("   • 토글 스트리밍: 포트 8001 (picam2_main.py - 1 클라이언트 권장)")
     print("   • 모션 블랙박스: 백그라운드 (detection_cam0,1.py 듀얼 카메라 동시 감지)")
     
     uvicorn.run(

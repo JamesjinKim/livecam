@@ -97,47 +97,111 @@ def start_camera_stream(camera_id: int, resolution: str = None):
 
 @log_execution_time("카메라_스트림_중지")
 def stop_camera_stream(camera_id: int):
-    """카메라 스트리밍 중지 - 메모리 정리 추가"""
+    """카메라 스트리밍 중지 - 강화된 프로세스 정리"""
     if camera_id in camera_processes:
         logger.info(f"[STOP] 카메라 {camera_id} 스트림 중지 시작")
         try:
             process = camera_processes[camera_id]
-            # 프로세스 완전 종료
-            logger.debug(f"카메라 {camera_id} 프로세스 SIGTERM 신호 전송")
-            process.send_signal(signal.SIGTERM)
-            try:
-                process.wait(timeout=5)  # 더 긴 대기 시간
-                logger.debug(f"카메라 {camera_id} 프로세스 정상 종료")
-            except subprocess.TimeoutExpired:
-                logger.warning(f"[WARN] Force killing camera {camera_id} (SIGTERM 실패)")
-                print(f"[WARN] Force killing camera {camera_id}")
-                process.kill()
-                process.wait(timeout=2)
+            pid = process.pid
             
-            # stdout 버퍼 정리 (남은 데이터 소비)
+            # 1. 프로세스 상태 확인
+            if process.poll() is None:  # 프로세스가 아직 실행 중
+                logger.debug(f"카메라 {camera_id} 프로세스 (PID: {pid}) SIGTERM 신호 전송")
+                
+                # 2. 정상 종료 시도 (SIGTERM)
+                try:
+                    process.send_signal(signal.SIGTERM)
+                    process.wait(timeout=3)
+                    logger.debug(f"카메라 {camera_id} 프로세스 정상 종료")
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"[WARN] SIGTERM timeout, 강제 종료 시도 (PID: {pid})")
+                    
+                    # 3. 강제 종료 시도 (SIGKILL)
+                    try:
+                        process.kill()
+                        process.wait(timeout=3)
+                        logger.debug(f"카메라 {camera_id} 프로세스 강제 종료 완료")
+                    except subprocess.TimeoutExpired:
+                        logger.error(f"[ERROR] SIGKILL timeout for PID {pid}")
+                        
+                        # 4. 시스템 레벨 강제 종료
+                        try:
+                            import os
+                            os.kill(pid, signal.SIGKILL)
+                            logger.warning(f"[KILL] 시스템 레벨 강제 종료 PID {pid}")
+                        except ProcessLookupError:
+                            logger.info(f"[OK] 프로세스 {pid} 이미 종료됨")
+                        except Exception as kill_error:
+                            logger.error(f"[ERROR] 프로세스 {pid} 강제 종료 실패: {kill_error}")
+            
+            # 5. stdout 버퍼 완전 정리
             if process.stdout:
                 try:
-                    # 남은 데이터를 읽어서 버림
-                    process.stdout.read(1024)
-                except:
-                    pass
-                process.stdout.close()
+                    # 남은 모든 데이터를 읽어서 버림 (블로킹 방지를 위한 비블로킹 읽기)
+                    import select
+                    import fcntl
+                    import os
+                    
+                    fd = process.stdout.fileno()
+                    # 논블로킹 모드 설정
+                    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+                    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+                    
+                    # 모든 남은 데이터 읽기
+                    total_read = 0
+                    while True:
+                        if select.select([process.stdout], [], [], 0.1)[0]:
+                            data = process.stdout.read(65536)  # 64KB 청크
+                            if not data:
+                                break
+                            total_read += len(data)
+                            if total_read > 10 * 1024 * 1024:  # 10MB 제한
+                                logger.warning(f"[WARN] 버퍼 정리 중 10MB 제한 도달, 강제 종료")
+                                break
+                        else:
+                            break
+                    
+                    if total_read > 0:
+                        logger.debug(f"[BUFFER] {total_read} bytes 버퍼 정리됨")
+                        
+                except Exception as buffer_error:
+                    logger.warning(f"[WARN] 버퍼 정리 중 오류 (무시): {buffer_error}")
+                finally:
+                    try:
+                        process.stdout.close()
+                    except:
+                        pass
             
-            # stderr는 DEVNULL이므로 정리 불필요
-                
+            # 6. 프로세스 최종 상태 확인
+            final_status = process.poll()
+            if final_status is not None:
+                logger.info(f"[STOP] 프로세스 {pid} 종료 상태: {final_status}")
+            else:
+                logger.error(f"[ERROR] 프로세스 {pid}가 여전히 실행 중일 수 있음")
+            
+            # 7. 프로세스 딕셔너리에서 제거
             del camera_processes[camera_id]
-            # 통계 초기화
+            
+            # 8. 통계 초기화
             stream_stats[camera_id] = {"frame_count": 0, "avg_frame_size": 0, "fps": 0, "last_update": 0}
             
-            # 가비지 컬렉션 강제 실행으로 메모리 정리
+            # 9. 추가 정리 대기 시간 (카메라 하드웨어 해제 대기)
+            import time
+            time.sleep(0.5)
+            
+            # 10. 가비지 컬렉션 강제 실행
             import gc
             gc.collect()
             
-            logger.info(f"[STOP] Camera {camera_id} stopped and cleaned")
-            print(f"[STOP] Camera {camera_id} stopped and cleaned")
+            logger.info(f"[STOP] Camera {camera_id} stopped and cleaned (PID: {pid})")
+            print(f"[STOP] Camera {camera_id} stopped and cleaned (PID: {pid})")
+            
         except Exception as e:
             logger.error(f"[ERROR] Error stopping camera {camera_id}: {e}")
             print(f"[ERROR] Error stopping camera {camera_id}: {e}")
+            # 비상 정리 - 딕셔너리에서라도 제거
+            if camera_id in camera_processes:
+                del camera_processes[camera_id]
     else:
         logger.warning(f"카메라 {camera_id} 프로세스가 존재하지 않음")
 
@@ -606,7 +670,7 @@ async def root():
                     <h3>시스템 제어</h3>
                     <div style="display: flex; align-items: center; justify-content: center;">
                         <a href="/exit" class="exit-btn">
-                            [STOP] CCTV 종료
+                            🛑  CCTV 종료
                         </a>
                         <!-- 하트비트 인디케이터 -->
                         <div class="heartbeat-container">
