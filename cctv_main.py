@@ -13,7 +13,18 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
 import uvicorn
 
+# 로깅 시스템 import
+from logger import setup_logger, get_logger, cleanup_logger, log_execution_time
+
 app = FastAPI()
+
+# 로거 초기화
+logger = setup_logger(
+    log_dir="logs",
+    log_level="INFO",  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    console_output=True,
+    async_logging=True
+)
 
 # 전역 변수
 current_camera = 0
@@ -34,9 +45,13 @@ RESOLUTIONS = {
     "1280x720": {"width": 1280, "height": 720, "name": "720p"}
 }
 
+@log_execution_time("카메라_스트림_시작")
 def start_camera_stream(camera_id: int, resolution: str = None):
     """카메라 스트리밍 시작"""
+    logger.info(f"[START] 카메라 {camera_id} 스트리밍 시작 요청 (해상도: {resolution or current_resolution})")
+    
     if camera_id in camera_processes:
+        logger.info(f"기존 카메라 {camera_id} 프로세스 종료 중...")
         stop_camera_stream(camera_id)
     
     # 해상도 설정
@@ -61,6 +76,8 @@ def start_camera_stream(camera_id: int, resolution: str = None):
         "--output", "-"
     ]
     
+    logger.debug(f"rpicam-vid 명령어: {' '.join(cmd)}")
+    
     try:
         # stderr를 /dev/null로 리다이렉트하여 버퍼 오버플로우 방지
         process = subprocess.Popen(
@@ -70,23 +87,30 @@ def start_camera_stream(camera_id: int, resolution: str = None):
             bufsize=0  # 버퍼링 비활성화
         )
         camera_processes[camera_id] = process
-        print(f"✅ Camera {camera_id} started at {resolution} (PID: {process.pid})")
+        logger.info(f"[OK] Camera {camera_id} started at {resolution} (PID: {process.pid})")
+        print(f"[OK] Camera {camera_id} started at {resolution} (PID: {process.pid})")
         return True
     except Exception as e:
-        print(f"❌ Failed to start camera {camera_id}: {e}")
+        logger.error(f"[ERROR] Failed to start camera {camera_id}: {e}")
+        print(f"[ERROR] Failed to start camera {camera_id}: {e}")
         return False
 
+@log_execution_time("카메라_스트림_중지")
 def stop_camera_stream(camera_id: int):
     """카메라 스트리밍 중지 - 메모리 정리 추가"""
     if camera_id in camera_processes:
+        logger.info(f"[STOP] 카메라 {camera_id} 스트림 중지 시작")
         try:
             process = camera_processes[camera_id]
             # 프로세스 완전 종료
+            logger.debug(f"카메라 {camera_id} 프로세스 SIGTERM 신호 전송")
             process.send_signal(signal.SIGTERM)
             try:
                 process.wait(timeout=5)  # 더 긴 대기 시간
+                logger.debug(f"카메라 {camera_id} 프로세스 정상 종료")
             except subprocess.TimeoutExpired:
-                print(f"⚠️ Force killing camera {camera_id}")
+                logger.warning(f"[WARN] Force killing camera {camera_id} (SIGTERM 실패)")
+                print(f"[WARN] Force killing camera {camera_id}")
                 process.kill()
                 process.wait(timeout=2)
             
@@ -109,9 +133,13 @@ def stop_camera_stream(camera_id: int):
             import gc
             gc.collect()
             
-            print(f"🛑 Camera {camera_id} stopped and cleaned")
+            logger.info(f"[STOP] Camera {camera_id} stopped and cleaned")
+            print(f"[STOP] Camera {camera_id} stopped and cleaned")
         except Exception as e:
-            print(f"⚠️ Error stopping camera {camera_id}: {e}")
+            logger.error(f"[ERROR] Error stopping camera {camera_id}: {e}")
+            print(f"[ERROR] Error stopping camera {camera_id}: {e}")
+    else:
+        logger.warning(f"카메라 {camera_id} 프로세스가 존재하지 않음")
 
 def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
     """최적화된 MJPEG 스트림 생성 - 메모리 효율 개선"""
@@ -150,23 +178,26 @@ def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
     last_fps_update = start_time
     last_gc_time = start_time  # 가비지 컬렉션 타이머
     
-    print(f"🎬 Starting {current_resolution} stream for camera {camera_id}")
-    print(f"📊 Buffer config: {buffer_limit//1024}KB limit, {chunk_size//1024}KB chunks")
+    logger.info(f"[STREAM] Starting {current_resolution} stream for camera {camera_id}")
+    logger.debug(f"[CONFIG] Buffer config: {buffer_limit//1024}KB limit, {chunk_size//1024}KB chunks")
+    print(f"[STREAM] Starting {current_resolution} stream for camera {camera_id}")
+    print(f"[CONFIG] Buffer config: {buffer_limit//1024}KB limit, {chunk_size//1024}KB chunks")
     
     # 클라이언트 등록
     if client_ip:
         active_clients.add(client_ip)
-        print(f"👥 Client connected: {client_ip} (Total: {len(active_clients)})")
+        logger.info(f"[CLIENT] Client connected: {client_ip} (Total: {len(active_clients)})")
+        print(f"[CLIENT] Client connected: {client_ip} (Total: {len(active_clients)})")
     
     try:
         while True:
             try:
                 chunk = process.stdout.read(chunk_size)
                 if not chunk:
-                    print(f"⚠️ No data from camera {camera_id}, stream ending")
+                    print(f"[WARN] No data from camera {camera_id}, stream ending")
                     break
             except Exception as e:
-                print(f"❌ Read error from camera {camera_id}: {e}")
+                print(f"[ERROR] Read error from camera {camera_id}: {e}")
                 break
                 
             buffer.extend(chunk)
@@ -210,7 +241,7 @@ def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
                         
                         # 프레임 카운터 자동 리셋 (10만 프레임마다 = 약 55분)
                         if frame_count >= 100000:
-                            print(f"🔄 Auto-reset: Frame counter reached 100K, resetting for memory stability")
+                            print(f"[RESET] Auto-reset: Frame counter reached 100K, resetting for memory stability")
                             frame_count = 1  # 나누기 오류 방지를 위해 1로 설정
                             total_frame_size = frame_size
                             start_time = time.time()
@@ -241,23 +272,23 @@ def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
                             last_gc_time = current_time
                         
                         if frame_count % 150 == 0:  # 150프레임마다 로그
-                            print(f"📊 Camera {camera_id} ({current_resolution}): {frame_count} frames, {stream_stats[camera_id]['fps']} fps, avg {frame_size//1024}KB")
+                            print(f"[STATS] Camera {camera_id} ({current_resolution}): {frame_count} frames, {stream_stats[camera_id]['fps']} fps, avg {frame_size//1024}KB")
                     
                     except Exception as e:
-                        print(f"⚠️ Frame yield error for camera {camera_id}: {e}")
+                        print(f"[ERROR] Frame yield error for camera {camera_id}: {e}")
                         break
                 else:
                     if frame_count % 100 == 0 and frame_size > 0:  # 가끔 로그
-                        print(f"⚠️ Frame size {frame_size//1024}KB out of range ({frame_min_size//1024}-{frame_max_size//1024}KB)")
+                        print(f"[WARN] Frame size {frame_size//1024}KB out of range ({frame_min_size//1024}-{frame_max_size//1024}KB)")
                         
     except Exception as e:
-        print(f"❌ Stream error for camera {camera_id}: {e}")
+        print(f"[ERROR] Stream error for camera {camera_id}: {e}")
     finally:
         # 클라이언트 연결 종료
         if client_ip and client_ip in active_clients:
             active_clients.remove(client_ip)
-            print(f"🚫 Client disconnected: {client_ip} (Remaining: {len(active_clients)})")
-        print(f"⏹️ Camera {camera_id} ({current_resolution}) stream ended (total: {frame_count} frames)")
+            print(f"[CLIENT] Client disconnected: {client_ip} (Remaining: {len(active_clients)})")
+        print(f"[END] Camera {camera_id} ({current_resolution}) stream ended (total: {frame_count} frames)")
         # 스트림 종료 시 통계 초기화
         if camera_id in stream_stats:
             stream_stats[camera_id]["last_update"] = 0
@@ -575,7 +606,7 @@ async def root():
                     <h3>시스템 제어</h3>
                     <div style="display: flex; align-items: center; justify-content: center;">
                         <a href="/exit" class="exit-btn">
-                            🛑 CCTV 종료
+                            [STOP] CCTV 종료
                         </a>
                         <!-- 하트비트 인디케이터 -->
                         <div class="heartbeat-container">
@@ -827,7 +858,7 @@ async def switch_camera(camera_id: int):
     if camera_id == current_camera:
         return {"success": True, "message": f"Camera {camera_id} already active"}
     
-    print(f"🔄 Switching from camera {current_camera} to camera {camera_id}")
+    print(f"[SWITCH] Switching from camera {current_camera} to camera {camera_id}")
     
     # 기존 카메라 정지
     stop_camera_stream(current_camera)
@@ -838,7 +869,7 @@ async def switch_camera(camera_id: int):
     
     if success:
         current_camera = camera_id
-        print(f"✅ Successfully switched to camera {camera_id}")
+        print(f"[OK] Successfully switched to camera {camera_id}")
         return {"success": True, "message": f"Switched to camera {camera_id}"}
     else:
         # 실패 시 기존 카메라 다시 시작
@@ -852,13 +883,13 @@ async def video_stream(request: Request):
     
     # 단일 클라이언트 제한 확인
     if len(active_clients) >= MAX_CLIENTS and client_ip not in active_clients:
-        print(f"🚫 Stream request rejected: {client_ip} (Max clients: {MAX_CLIENTS})")
+        print(f"[REJECT] Stream request rejected: {client_ip} (Max clients: {MAX_CLIENTS})")
         raise HTTPException(
             status_code=423,  # Locked
             detail=f"Maximum {MAX_CLIENTS} client(s) allowed. Another client is currently streaming."
         )
     
-    print(f"🌐 Stream request for camera {current_camera}")
+    print(f"[REQUEST] Stream request for camera {current_camera}")
     
     # 현재 카메라가 시작되지 않았으면 시작
     if current_camera not in camera_processes:
@@ -895,7 +926,7 @@ async def reset_stream_stats():
             "fps": 0.0, 
             "last_update": time.time()
         }
-        print(f"📊 Manual stats reset for camera {current_camera}")
+        print(f"[STATS] Manual stats reset for camera {current_camera}")
         
         # 강제 가비지 컬렉션
         import gc
@@ -921,7 +952,7 @@ async def change_resolution(resolution: str):
     if resolution not in RESOLUTIONS:
         raise HTTPException(status_code=400, detail="Invalid resolution")
     
-    print(f"🔄 Changing resolution to {resolution}")
+    print(f"[RESOLUTION] Changing resolution to {resolution}")
     
     # 현재 해상도와 같으면 변경하지 않음
     if resolution == current_resolution:
@@ -932,42 +963,42 @@ async def change_resolution(resolution: str):
     
     # 현재 스트리밍 중인 카메라가 있으면 재시작
     if current_camera in camera_processes:
-        print(f"🔄 Stopping current camera {current_camera} for resolution change...")
+        print(f"[RESOLUTION] Stopping current camera {current_camera} for resolution change...")
         stop_camera_stream(current_camera)
         
         # 충분한 대기 시간으로 완전한 정리 보장
         await asyncio.sleep(2.0)  # 2초 대기
         
-        print(f"🚀 Starting camera {current_camera} with {resolution}...")
+        print(f"[START] Starting camera {current_camera} with {resolution}...")
         success = start_camera_stream(current_camera, resolution)
         
         if success:
             # 카메라 시작 후 추가 안정화 대기
             await asyncio.sleep(1.0)
-            print(f"✅ Successfully changed resolution to {resolution}")
+            print(f"[OK] Successfully changed resolution to {resolution}")
             return {"success": True, "message": f"Resolution changed to {resolution}"}
         else:
             # 실패 시 이전 해상도로 복원
-            print(f"❌ Failed to start with {resolution}, reverting to {old_resolution}")
+            print(f"[ERROR] Failed to start with {resolution}, reverting to {old_resolution}")
             current_resolution = old_resolution
             await asyncio.sleep(1.0)
             start_camera_stream(current_camera, old_resolution)
             raise HTTPException(status_code=500, detail="Failed to change resolution")
     else:
-        print(f"✅ Resolution set to {resolution} (will apply when camera starts)")
+        print(f"[OK] Resolution set to {resolution} (will apply when camera starts)")
         return {"success": True, "message": f"Resolution set to {resolution}"}
 
 @app.post("/api/shutdown")
 async def shutdown_system():
     """시스템 안전 종료"""
-    print("🛑 System shutdown requested via web interface")
+    print("[SHUTDOWN] System shutdown requested via web interface")
     
     # 모든 카메라 프로세스 정리
     for camera_id in list(camera_processes.keys()):
-        print(f"🧹 Stopping camera {camera_id}...")
+        print(f"[SHUTDOWN] Stopping camera {camera_id}...")
         stop_camera_stream(camera_id)
     
-    print("✅ All cameras stopped. Server will shutdown...")
+    print("[SHUTDOWN] All cameras stopped. Server will shutdown...")
     
     # 비동기적으로 서버 종료 (응답 후에 종료)
     import threading
@@ -984,7 +1015,7 @@ async def shutdown_system():
 @app.get("/exit")
 async def exit_system():
     """브라우저에서 /exit 접속 시 시스템 종료"""
-    print("🛑 Exit requested via /exit URL")
+    print("[EXIT] Exit requested via /exit URL")
     
     # 종료 페이지 HTML 반환
     html_content = """
@@ -1057,27 +1088,35 @@ async def exit_system():
 @app.on_event("startup")
 async def startup_event():
     """서버 시작 시 초기화"""
-    print("🎬 Server startup complete - camera will start on first stream request")
+    logger.info("[START] CCTV 서버 시작 완료 - 첫 스트림 요청 시 카메라 활성화")
+    print("[START] Server startup complete - camera will start on first stream request")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """서버 종료 시 모든 카메라 정리"""
-    print("🧹 Cleaning up cameras...")
+    logger.info("[SHUTDOWN] CCTV 서버 종료 중 - 카메라 정리 시작")
+    print("[SHUTDOWN] Cleaning up cameras...")
     for camera_id in list(camera_processes.keys()):
         stop_camera_stream(camera_id)
+    cleanup_logger()
 
 def cleanup_all_processes():
     """모든 카메라 프로세스 정리"""
-    print("🧹 Cleanup: Stopping all camera processes...")
+    logger.info("[CLEANUP] 긴급 정리: 모든 카메라 프로세스 중지")
+    print("[CLEANUP] Cleanup: Stopping all camera processes...")
     for camera_id in list(camera_processes.keys()):
         stop_camera_stream(camera_id)
-    print("✅ All camera processes cleaned up")
+    logger.info("[CLEANUP] All camera processes cleaned up")
+    print("[CLEANUP] All camera processes cleaned up")
+    cleanup_logger()
 
 def signal_handler(signum, frame):
     """신호 핸들러 - SIGINT/SIGTERM 처리"""
-    print(f"\n🛑 Received signal {signum} (Ctrl+C), cleaning up...")
+    logger.warning(f"[SIGNAL] 시스템 종료 신호 수신: {signum} (Ctrl+C)")
+    print(f"\n[SIGNAL] Received signal {signum} (Ctrl+C), cleaning up...")
     cleanup_all_processes()
-    print("👋 Server shutdown complete")
+    logger.info("[EXIT] CCTV 서버 완전 종료")
+    print("[EXIT] Server shutdown complete")
     sys.exit(0)
 
 if __name__ == "__main__":
@@ -1088,9 +1127,9 @@ if __name__ == "__main__":
     # atexit 핸들러 등록 (추가 안전장치)
     atexit.register(cleanup_all_processes)
     
-    print("🚀 Starting simple toggle camera server on port 8001")
-    print("🎯 Access web interface at: http://<your-pi-ip>:8001")
-    print("🛡️ Signal handlers registered for clean shutdown")
+    print("[INIT] Starting simple toggle camera server on port 8001")
+    print("[INIT] Access web interface at: http://<your-pi-ip>:8001")
+    print("[INIT] Signal handlers registered for clean shutdown")
     
     try:
         uvicorn.run(
@@ -1100,10 +1139,10 @@ if __name__ == "__main__":
             log_level="info"
         )
     except KeyboardInterrupt:
-        print("\n🛑 Keyboard interrupt received")
+        print("\n[INTERRUPT] Keyboard interrupt received")
         cleanup_all_processes()
     except Exception as e:
-        print(f"❌ Server error: {e}")
+        print(f"[ERROR] Server error: {e}")
         cleanup_all_processes()
     finally:
-        print("👋 Server shutdown complete")
+        print("[EXIT] Server shutdown complete")
