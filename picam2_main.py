@@ -55,19 +55,22 @@ stream_stats = {
     1: {"frame_count": 0, "avg_frame_size": 0, "fps": 0, "last_update": 0}
 }
 
-# 단일 클라이언트 제한
+# 클라이언트 제한 설정
 active_clients = set()
-MAX_CLIENTS = 1
 
-# 해상도 설정
+# 해상도 설정 (클라이언트 제한 포함)
 RESOLUTIONS = {
-    "640x480": {"width": 640, "height": 480, "name": "480p"},
-    "1280x720": {"width": 1280, "height": 720, "name": "720p"}
+    "640x480": {"width": 640, "height": 480, "name": "480p", "max_clients": 2},
+    "1280x720": {"width": 1280, "height": 720, "name": "720p", "max_clients": 2}
 }
+
+# 현재 해상도에 따른 최대 클라이언트 수 가져오기
+def get_max_clients():
+    return RESOLUTIONS.get(current_resolution, {}).get("max_clients", 1)
 
 @log_execution_time("카메라_스트림_시작")
 def start_camera_stream(camera_id: int, resolution: str = None):
-    """카메라 스트리밍 시작 - Picamera2 버전"""
+    """카메라 스트리밍 시작 - GPU 버전"""
     logger.info(f"[START] 카메라 {camera_id} 스트리밍 시작 요청 (해상도: {resolution or current_resolution})")
     
     if camera_id in camera_instances:
@@ -132,16 +135,29 @@ def stop_camera_stream(camera_id: int):
         try:
             picam2 = camera_instances[camera_id]
             
-            # Picamera2 정리
-            if picam2.started:
-                picam2.stop()
-            picam2.close()
+            # Picamera2 정리 (안전하게)
+            try:
+                if hasattr(picam2, 'started') and picam2.started:
+                    picam2.stop()
+            except Exception as e:
+                logger.debug(f"Error stopping camera: {e}")
+                pass
+            
+            try:
+                picam2.close()
+            except Exception as e:
+                logger.debug(f"Error closing camera: {e}")
+                pass
             
             # 인스턴스 제거
             del camera_instances[camera_id]
             
             # 통계 초기화
             stream_stats[camera_id] = {"frame_count": 0, "avg_frame_size": 0, "fps": 0, "last_update": 0}
+            
+            # 활성 클라이언트 클리어 (카메라가 멈추면 모든 클라이언트 연결도 끊김)
+            active_clients.clear()
+            logger.info(f"[STOP] Active clients cleared for camera {camera_id}")
             
             # 가비지 컬렉션
             import gc
@@ -198,6 +214,11 @@ def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
     try:
         while True:
             try:
+                # 카메라가 중지되었는지 확인
+                if camera_id not in camera_instances:
+                    print(f"[STREAM] Camera {camera_id} stopped, ending stream")
+                    break
+                    
                 # Picamera2로 JPEG 프레임 캡처 (quality 파라미터 제거)
                 stream = io.BytesIO()
                 picam2.capture_file(stream, format='jpeg')
@@ -282,13 +303,13 @@ def generate_mjpeg_stream(camera_id: int, client_ip: str = None):
 # 기존 cctv_main.py의 웹 인터페이스 그대로 사용
 @app.get("/")
 async def root():
-    """메인 페이지 - 기존 인터페이스 + Picamera2 표시"""
+    """메인 페이지 - Picamera2 버전"""
     # 기존 HTML에서 제목만 수정
     html_content = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Picamera2 듀얼 카메라 토글</title>
+        <title>SHT 듀얼 카메라</title>
         <meta charset="UTF-8">
         <style>
             body { 
@@ -434,33 +455,37 @@ async def root():
                 font-weight: bold;
             }
             
-            /* 하트비트 인디케이터 스타일 */
+            /* 하트비트 인디케이터 스타일 - 레이아웃 개선 */
             .heartbeat-container {
+                position: relative;
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
                 margin-left: 20px;
                 vertical-align: middle;
+                min-width: 80px;  /* 최소 너비 고정 */
+                height: 30px;      /* 높이 고정 */
             }
             
             .heartbeat-indicator {
+                position: absolute;  /* 절대 위치로 변경 */
+                left: 0;
+                top: 50%;
+                transform: translateY(-50%);
                 width: 20px;
                 height: 20px;
                 border-radius: 50%;
-                margin-right: 8px;
-                position: relative;
+                will-change: transform;  /* 애니메이션 최적화 */
             }
             
             .heartbeat-indicator.green {
                 background: #28a745;
                 animation: pulse-green 1s infinite;
-                box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
             }
             
             .heartbeat-indicator.yellow {
                 background: #ffc107;
                 animation: pulse-yellow 2s infinite;
-                box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
             }
             
             .heartbeat-indicator.red {
@@ -475,44 +500,49 @@ async def root():
             
             @keyframes pulse-green {
                 0% {
-                    transform: scale(0.95);
+                    transform: translateY(-50%) scale(0.95);
                     box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
                 }
                 70% {
-                    transform: scale(1);
+                    transform: translateY(-50%) scale(1);
                     box-shadow: 0 0 0 10px rgba(40, 167, 69, 0);
                 }
                 100% {
-                    transform: scale(0.95);
+                    transform: translateY(-50%) scale(0.95);
                     box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
                 }
             }
             
             @keyframes pulse-yellow {
                 0% {
-                    transform: scale(0.95);
+                    transform: translateY(-50%) scale(0.95);
                     box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
                 }
                 70% {
-                    transform: scale(1);
+                    transform: translateY(-50%) scale(1);
                     box-shadow: 0 0 0 10px rgba(255, 193, 7, 0);
                 }
                 100% {
-                    transform: scale(0.95);
+                    transform: translateY(-50%) scale(0.95);
                     box-shadow: 0 0 0 0 rgba(255, 193, 7, 0);
                 }
             }
             
             .heartbeat-text {
+                position: absolute;  /* 절대 위치로 변경 */
+                left: 30px;  /* 인디케이터 오른쪽에 고정 */
+                top: 50%;
+                transform: translateY(-50%);
                 font-size: 12px;
                 color: #495057;
                 font-weight: bold;
+                white-space: nowrap;  /* 텍스트 줄바꿈 방지 */
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>Picamera2 듀얼 카메라 토글 <span class="badge">Pi5 GPU 가속</span></h1>
+            <h1>SHT 듀얼 카메라 CCTV <span class="badge">GPU 가속</span></h1>
             
             <div class="status">
                 <div class="status-grid">
@@ -523,9 +553,6 @@ async def root():
                         <strong>해상도:</strong> <span id="resolution">640×480</span>
                     </div>
                     <div class="status-item">
-                        <strong>엔진:</strong> <span id="engine">Picamera2</span>
-                    </div>
-                    <div class="status-item">
                         <strong>GPU:</strong> <span id="gpu">VideoCore VII</span>
                     </div>
                     <div class="status-item">
@@ -533,6 +560,9 @@ async def root():
                     </div>
                     <div class="status-item">
                         <strong>프레임 수:</strong> <span id="frame-count">0</span>
+                    </div>
+                    <div class="status-item">
+                        <strong>접속 클라이언트:</strong> <span id="client-count">0/1</span>
                     </div>
                     <div class="status-item">
                         <strong>평균 프레임 크기:</strong> <span id="frame-size">0 KB</span>
@@ -583,7 +613,7 @@ async def root():
                 <img id="video-stream" src="/stream" alt="Picamera2 Live Stream">
             </div>
             
-            <p>Picamera2 + Pi5 VideoCore VII GPU 하드웨어 가속</p>
+            <p>Pi5 VideoCore VII GPU 하드웨어 가속</p>
         </div>
         
         <script>
@@ -624,6 +654,9 @@ async def root():
                             
                             const img = document.getElementById('video-stream');
                             img.src = `/stream?t=${Date.now()}`;
+                            
+                            // 해상도 변경 시 스테이터스 업데이트
+                            setTimeout(updateStats, 500);
                         }
                     })
                     .catch(error => console.error('Resolution change error:', error));
@@ -635,6 +668,11 @@ async def root():
                     .then(data => {
                         document.getElementById('current-camera').textContent = data.current_camera;
                         document.getElementById('resolution').textContent = data.resolution;
+                        
+                        // 클라이언트 수 업데이트
+                        if (data.active_clients !== undefined && data.max_clients !== undefined) {
+                            document.getElementById('client-count').textContent = `${data.active_clients}/${data.max_clients}`;
+                        }
                         
                         const stats = data.stats;
                         if (stats && Object.keys(stats).length > 0) {
@@ -651,6 +689,12 @@ async def root():
                                 isActive ? '스트리밍 중' : '연결 끊김';
                             document.getElementById('stream-status').style.color = 
                                 isActive ? '#28a745' : '#dc3545';
+                            
+                            // 스트리밍 중이면 lastFrameTime 업데이트
+                            if (isActive) {
+                                lastFrameTime = Date.now();
+                                updateStreamQuality(true);
+                            }
                         } else {
                             document.getElementById('fps').textContent = '0.0';
                             document.getElementById('frame-count').textContent = '0';
@@ -670,49 +714,22 @@ async def root():
             function initStreamMonitoring() {
                 const videoStream = document.getElementById('video-stream');
                 
-                // MJPEG 스트림을 위한 대체 방법 - 이미지 크기 변화 감지
-                let lastImageSize = 0;
-                function checkStreamActivity() {
-                    // 스트림 연결 상태 체크
-                    fetch('/stream', { 
-                        method: 'HEAD',
-                        signal: AbortSignal.timeout(1000) // 1초 타임아웃
-                    })
-                    .then(response => {
-                        if (response.ok) {
-                            lastFrameTime = Date.now();
-                            updateStreamQuality(true);
-                        } else {
-                            updateStreamQuality(false);
-                        }
-                    })
-                    .catch(() => {
-                        updateStreamQuality(false);
-                    });
-                }
-                
-                // 에러 감지
-                videoStream.addEventListener('error', function() {
-                    updateStreamQuality(false);
-                    setTimeout(() => {
-                        this.src = `/stream?t=${Date.now()}`;
-                    }, 2000);
-                });
-                
-                // 스트림 로드 감지 (이미지가 변경될 때)
+                // 프레임 로드 감지
                 videoStream.addEventListener('load', function() {
                     lastFrameTime = Date.now();
                     updateStreamQuality(true);
                 });
                 
-                // 정기적으로 스트림 활성화 체크 (2초마다)
-                setInterval(checkStreamActivity, 2000);
+                // 에러 감지
+                videoStream.addEventListener('error', function() {
+                    updateStreamQuality(false);
+                });
                 
                 // 0.5초마다 하트비트 상태 체크
                 setInterval(checkHeartbeat, 500);
                 
-                // 초기 하트비트 설정
-                lastFrameTime = Date.now();
+                // 2초마다 네트워크 품질 업데이트
+                setInterval(updateNetworkQuality, 2000);
             }
             
             function checkHeartbeat() {
@@ -752,6 +769,16 @@ async def root():
                 }
             }
             
+            function updateNetworkQuality() {
+                // 품질 바 생성
+                const filled = Math.floor(streamQuality / 10);
+                const empty = 10 - filled;
+                const bar = '[' + '█'.repeat(filled) + '░'.repeat(empty) + '] ' + streamQuality + '%';
+                
+                // 콘솔에만 표시 (필요한 경우)
+                console.log('Network Quality: ' + bar);
+            }
+            
             // 페이지 로드 시 모니터링 시스템 시작
             document.addEventListener('DOMContentLoaded', function() {
                 initStreamMonitoring(); // 스트림 모니터링 시작
@@ -781,7 +808,7 @@ async def switch_camera(camera_id: int):
     
     print(f"[SWITCH] Switching from camera {current_camera} to camera {camera_id}")
     
-    # 기존 카메라 정지
+    # 기존 카메라 정지 (active_clients도 자동으로 클리어됨)
     stop_camera_stream(current_camera)
     await asyncio.sleep(0.5)
     
@@ -802,12 +829,15 @@ async def video_stream(request: Request):
     """비디오 스트림"""
     client_ip = request.client.host
     
-    # 단일 클라이언트 제한 확인
-    if len(active_clients) >= MAX_CLIENTS and client_ip not in active_clients:
-        print(f"[REJECT] Stream request rejected: {client_ip} (Max clients: {MAX_CLIENTS})")
+    # 현재 해상도에 따른 최대 클라이언트 수 확인
+    max_clients = get_max_clients()
+    
+    # 클라이언트 제한 확인
+    if len(active_clients) >= max_clients and client_ip not in active_clients:
+        print(f"[REJECT] Stream request rejected: {client_ip} (Max clients: {max_clients} for {current_resolution})")
         raise HTTPException(
             status_code=423,
-            detail=f"Maximum {MAX_CLIENTS} client(s) allowed. Another client is currently streaming."
+            detail=f"Maximum {max_clients} client(s) allowed for {current_resolution}. Server at capacity."
         )
     
     # HEAD 요청 처리 (하트비트 체크용)
@@ -840,6 +870,8 @@ async def get_stream_stats():
         "codec": "MJPEG",
         "quality": "80-85%",
         "engine": "Picamera2",
+        "active_clients": len(active_clients),
+        "max_clients": get_max_clients(),
         "stats": stream_stats[current_camera] if current_camera in stream_stats else {}
     }
 
@@ -982,22 +1014,87 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """서버 종료 시 모든 카메라 정리"""
-    logger.info("[SHUTDOWN] Picamera2 CCTV 서버 종료 중 - 카메라 정리 시작")
-    print("[SHUTDOWN] Cleaning up cameras...")
-    for camera_id in list(camera_instances.keys()):
-        stop_camera_stream(camera_id)
+    try:
+        logger.info("[SHUTDOWN] Picamera2 CCTV 서버 종료 중 - 카메라 정리 시작")
+        print("[SHUTDOWN] Cleaning up cameras...")
+        
+        # 모든 카메라 정리
+        for camera_id in list(camera_instances.keys()):
+            try:
+                stop_camera_stream(camera_id)
+            except Exception as e:
+                logger.error(f"[SHUTDOWN] Error stopping camera {camera_id}: {e}")
+                pass
+        
+        logger.info("[SHUTDOWN] All cameras cleaned up")
+        print("[SHUTDOWN] All cameras stopped successfully")
+    except Exception as e:
+        logger.error(f"[SHUTDOWN] Error during shutdown: {e}")
+        pass
 
 def cleanup_all_cameras():
     """모든 카메라 인스턴스 정리"""
-    logger.info("[CLEANUP] 긴급 정리: 모든 카메라 인스턴스 중지")
-    print("[CLEANUP] Cleanup: Stopping all camera instances...")
-    for camera_id in list(camera_instances.keys()):
-        stop_camera_stream(camera_id)
-    logger.info("[CLEANUP] All camera instances cleaned up")
-    print("[CLEANUP] All camera instances cleaned up")
+    global active_clients, shutdown_in_progress
+    
+    # 이미 종료 중이면 중복 처리 방지
+    if shutdown_in_progress:
+        return
+    
+    shutdown_in_progress = True
+    
+    try:
+        logger.info("[CLEANUP] 모든 카메라 인스턴스 안전 정리 시작")
+        print("[CLEANUP] Starting safe cleanup of all camera instances...")
+        
+        # 활성 클라이언트 클리어
+        if active_clients:
+            logger.info(f"[CLEANUP] 활성 클라이언트 {len(active_clients)}개 연결 종료")
+            active_clients.clear()
+        
+        # 모든 카메라 정리 (timeout 포함)
+        import time
+        for camera_id in list(camera_instances.keys()):
+            try:
+                start_time = time.time()
+                logger.info(f"[CLEANUP] 카메라 {camera_id} 정리 중...")
+                stop_camera_stream(camera_id)
+                
+                # 정리 시간이 너무 오래 걸리면 강제 종료
+                if time.time() - start_time > 2.0:
+                    logger.warning(f"[CLEANUP] 카메라 {camera_id} 정리 타임아웃 - 강제 종료")
+                    if camera_id in camera_instances:
+                        try:
+                            camera_instances[camera_id].close()
+                        except:
+                            pass
+                        del camera_instances[camera_id]
+            except Exception as e:
+                logger.error(f"[CLEANUP] 카메라 {camera_id} 정리 실패: {e}")
+                print(f"[CLEANUP] Error stopping camera {camera_id}: {e}")
+                # 실패해도 딕셔너리에서 제거
+                if camera_id in camera_instances:
+                    del camera_instances[camera_id]
+        
+        logger.info("[CLEANUP] 모든 카메라 인스턴스 정리 완료")
+        print("[CLEANUP] All camera instances cleaned up successfully")
+    except Exception as e:
+        logger.error(f"[CLEANUP] 정리 중 오류 발생: {e}")
+        print(f"[CLEANUP] Error during cleanup: {e}")
+    finally:
+        # 남은 인스턴스 강제 정리
+        camera_instances.clear()
+
+# 전역 종료 플래그
+shutdown_in_progress = False
 
 def signal_handler(signum, frame):
     """신호 핸들러 - SIGINT/SIGTERM 처리"""
+    global shutdown_in_progress
+    
+    if shutdown_in_progress:
+        return
+    
+    shutdown_in_progress = True
     logger.warning(f"[SIGNAL] 시스템 종료 신호 수신: {signum} (Ctrl+C)")
     print(f"\n[SIGNAL] Received signal {signum} (Ctrl+C), cleaning up...")
     cleanup_all_cameras()
@@ -1021,6 +1118,7 @@ if __name__ == "__main__":
     print("[INFO] Engine: Picamera2 (rpicam-vid 교체)")
     print("[INFO] Features: Zero subprocess, Direct GPU access")
     print("[INFO] Access web interface at: http://<your-pi-ip>:8001")
+    print("[INFO] Signal handlers registered for clean shutdown")
     print("=" * 60)
     
     try:
@@ -1037,4 +1135,4 @@ if __name__ == "__main__":
         print(f"[ERROR] Server error: {e}")
         cleanup_all_cameras()
     finally:
-        print("[EXIT] Picamera2 server shutdown complete")
+        print("[EXIT] Server shutdown complete")
