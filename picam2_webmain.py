@@ -229,10 +229,12 @@ class CameraManager:
                         avg_size = total_frame_size / frame_count if frame_count > 0 else 0
                         
                         # 누적 프레임 수 계산 (100K 리셋 고려)
-                        cumulative_frames = self.stream_stats[self.current_camera]["frame_count"]
-                        # 리셋된 경우가 아니면 누적
-                        if frame_count > 1:
-                            cumulative_frames += frame_count
+                        if frame_count == 1:
+                            # 리셋된 경우: 새로 시작
+                            cumulative_frames = 1
+                        else:
+                            # 정상 증가: 기존 값에서 1씩 증가
+                            cumulative_frames = self.stream_stats[self.current_camera]["frame_count"] + 1
                         
                         self.stream_stats[self.current_camera] = {
                             "frame_count": cumulative_frames,
