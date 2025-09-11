@@ -1,0 +1,100 @@
+ Cython 변환 시 HTML과 웹 부분을 분리하는 것이 일반적이고 효율적입니다.
+
+  Cython 변환 전략
+
+  1. 분리 가능한 구조
+
+  livecam/
+  ├── core/                      # Cython으로 보호할 핵심 로직
+  │   ├── motion_detector.pyx    # 모션 감지 알고리즘 (.pyx = Cython)
+  │   ├── camera_manager.pyx     # 카메라 제어 로직
+  │   └── stream_processor.pyx   # 스트림 처리 알고리즘
+  │
+  ├── web/                       # 보호 불필요 (공개)
+  │   ├── static/
+  │   │   ├── index.html        # HTML 파일 (그대로 유지)
+  │   │   ├── style.css
+  │   │   └── script.js
+  │   └── api.py                # FastAPI 라우터 (Python 그대로)
+  │
+  ├── main.py                    # 메인 진입점 (Python 그대로)
+  └── setup.py                   # Cython 컴파일 설정
+
+  2. HTML 처리 방식
+
+  현재 코드 (HTML이 Python 안에 있음):
+  @app.get("/")
+  async def index():
+      html_content = """
+      <!DOCTYPE html>
+      <html>...</html>
+      """
+      return HTMLResponse(content=html_content)
+
+  분리 후 (권장):
+  # web/api.py - Python 그대로 유지
+  from fastapi import FastAPI
+  from fastapi.staticfiles import StaticFiles
+
+  app = FastAPI()
+  app.mount("/static", StaticFiles(directory="web/static"), name="static")
+
+  @app.get("/")
+  async def index():
+      with open("web/static/index.html", "r") as f:
+          return HTMLResponse(content=f.read())
+
+  3. Cython 변환 예시
+
+  보호할 핵심 로직만 분리:
+  # core/motion_detector.pyx (Cython으로 컴파일)
+  cdef class ProtectedMotionDetector:
+      cdef double threshold
+      cdef list secret_weights
+
+      def __init__(self, double threshold=10000):
+          self.threshold = threshold
+          self.secret_weights = [0.3, 0.5, 0.2]  # 비밀 알고리즘
+
+      cpdef bint detect_motion(self, frame):
+          # C 속도로 실행되는 보호된 알고리즘
+          cdef double result = self._calculate(frame)
+          return result > self.threshold
+
+  FastAPI는 그대로 유지:
+  # main.py - Python 그대로
+  from fastapi import FastAPI
+  from core.motion_detector import ProtectedMotionDetector  # 컴파일된 .so 파일 import
+
+  app = FastAPI()
+  detector = ProtectedMotionDetector()
+
+  @app.get("/detect")
+  async def detect(frame_data):
+      return {"motion": detector.detect_motion(frame_data)}
+
+  4. 컴파일 과정
+
+  # setup.py 실행
+  python setup.py build_ext --inplace
+
+  # 결과
+  core/
+  ├── motion_detector.pyx     # 원본 (삭제 가능)
+  ├── motion_detector.c       # C 코드 (삭제 가능)  
+  └── motion_detector.so      # 컴파일된 바이너리 (배포용) ✓
+
+  5. 장단점
+
+  장점:
+  - HTML/CSS/JS는 수정 가능 (UI 업데이트 용이)
+  - FastAPI 라우팅은 유연하게 유지
+  - 핵심 알고리즘만 완벽 보호
+  - 파일 크기 최소화
+
+  단점:
+  - 초기 구조 변경 필요
+  - 컴파일 과정 추가
+  - 플랫폼별 컴파일 필요 (ARM64 for Pi5)
+
+  이렇게 분리하면 웹 부분은 그대로 두고 핵심 비즈니스 로직만 보호할 수 있습니다.

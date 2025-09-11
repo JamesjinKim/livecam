@@ -11,7 +11,6 @@ sudo apt update -y
 echo "📥 필수 시스템 패키지 설치 중..."
 sudo apt install -y \
     python3-pip \
-    python3-venv \
     python3-opencv \
     rpicam-apps \
     ffmpeg \

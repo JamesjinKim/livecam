@@ -12,33 +12,3 @@ pillow>=10.0.0
 
 # System Monitoring & Process Management
 psutil>=5.9.0
-
-# Python Standard Library (included with Python 3.11+)
-# The following are built-in modules, no installation needed:
-# - asyncio
-# - atexit
-# - collections
-# - datetime
-# - os
-# - pathlib
-# - shutil
-# - signal
-# - subprocess
-# - sys
-# - tempfile
-# - threading
-# - time
-# - typing
-# - abc
-
-# System Requirements
-# - Python 3.11+
-# - Raspberry Pi OS (64-bit) recommended
-# - rpicam-apps (install via: sudo apt install rpicam-apps)
-# - ffmpeg (install via: sudo apt install ffmpeg)
-
-# Installation Instructions:
-# pip install -r requirements.txt
-# 
-# Or for system-wide installation on Raspberry Pi:
-# pip3 install -r requirements.txt --break-system-packages

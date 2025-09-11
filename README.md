@@ -59,14 +59,23 @@ sudo usermod -a -G video $USER
 ### 🎮 사용 방법
 
 #### 1. CCTV 스트리밍 시작
+
+**📦 통합 버전 (기본 권장)**:
 ```bash
 python3 picam2_main.py
+```
+
+**🔧 웹 분리 버전 (코드 보호용)** ⭐ 신규:
+```bash
+python3 picam2_webmain.py
 ```
 
 #### 2. 웹 접속
 ```
 브라우저에서 접속: http://라즈베리파이_IP:8001
 ```
+
+> **💡 참고**: 두 버전 모두 동일한 기능과 성능을 제공합니다. 웹 분리 버전은 향후 코드 보호(Cython 컴파일)를 위한 구조입니다.
 
 #### 3. 인터페이스 사용
 - **카메라 전환**: Camera 0 ↔ Camera 1 버튼 클릭
@@ -235,7 +244,12 @@ find videos/motion_events/ -name "*.mp4" -mtime +30 -delete
 
 #### 터미널 1: CCTV 실시간 모니터링
 ```bash
+# 기본 통합 버전
 python3 picam2_main.py
+
+# 또는 웹 분리 버전 (동일 기능)
+python3 picam2_webmain.py
+
 # → http://라즈베리파이_IP:8001 접속
 ```
 

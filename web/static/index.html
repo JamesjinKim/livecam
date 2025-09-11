@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHT CCTV System</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>SHT 듀얼 카메라 CCTV <span class="badge">GPU 가속</span></h1>
+        
+        <div class="status">
+            <div class="status-grid">
+                <div class="status-item">
+                    <strong>활성 카메라:</strong> <span id="current-camera">0</span>
+                </div>
+                <div class="status-item">
+                    <strong>해상도:</strong> <span id="resolution">640×480</span>
+                </div>
+                <div class="status-item">
+                    <strong>GPU:</strong> <span id="gpu">VideoCore VII</span>
+                </div>
+                <div class="status-item">
+                    <strong>FPS:</strong> <span id="fps">0.0</span>
+                </div>
+                <div class="status-item">
+                    <strong>프레임 수:</strong> <span id="frame-count">0</span>
+                </div>
+                <div class="status-item">
+                    <strong>접속 클라이언트:</strong> <span id="client-count">0/1</span>
+                </div>
+                <div class="status-item">
+                    <strong>평균 프레임 크기:</strong> <span id="frame-size">0 KB</span>
+                </div>
+                <div class="status-item">
+                    <strong>상태:</strong> <span id="stream-status">준비 중</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <div class="control-section">
+                <h3>카메라 선택</h3>
+                <button class="camera-btn active" id="cam0-btn" onclick="switchCamera(0)">
+                    카메라 0
+                </button>
+                <button class="camera-btn" id="cam1-btn" onclick="switchCamera(1)">
+                    카메라 1
+                </button>
+            </div>
+            
+            <div class="control-section">
+                <h3>해상도 선택</h3>
+                <button class="resolution-btn active" id="res-640-btn" onclick="changeResolution('640x480')">
+                    📺 480p (640×480)
+                </button>
+                <button class="resolution-btn" id="res-720-btn" onclick="changeResolution('1280x720')">
+                    📺 720p (1280×720)
+                </button>
+            </div>
+            
+            <div class="control-section">
+                <h3>시스템 제어</h3>
+                <div style="display: flex; align-items: center; justify-content: center;">
+                    <a href="/exit" class="exit-btn">
+                        🛑  CCTV 종료
+                    </a>
+                    <!-- 하트비트 인디케이터 -->
+                    <div class="heartbeat-container">
+                        <div class="heartbeat-indicator green" id="heartbeat-indicator"></div>
+                        <span class="heartbeat-text" id="heartbeat-text">LIVE</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="video-container resolution-640" id="video-container">
+            <img id="video-stream" src="/stream" alt="Picamera2 Live Stream">
+        </div>
+        
+        <p>Pi5 VideoCore VII GPU 하드웨어 가속</p>
+    </div>
+    
+    <script src="/static/script.js"></script>
+</body>
+</html>
