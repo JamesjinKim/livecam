@@ -4,8 +4,10 @@
 
 ## 📋 시스템 구성
 
-### 🔴 Part 1: 실시간 CCTV 스트리밍 (picam2_main.py)
-웹 브라우저를 통한 실시간 영상 모니터링 및 카메라 제어
+### 🔴 Part 1: 실시간 CCTV 스트리밍
+- **통합 버전**: `picam2_main.py` - Picamera2 기반 통합 CCTV
+- **분리 버전**: `picam2_webmain.py` + `web/` - 코드 보호를 위한 웹/백엔드 분리 구조
+- 웹 브라우저를 통한 실시간 영상 모니터링 및 카메라 제어
 
 ### ⚫ Part 2: 모션 감지 블랙박스 (detection_cam0.py, detection_cam1.py)
 OpenCV 기반 지능형 모션 감지 및 이벤트 녹화 시스템
@@ -35,7 +37,7 @@ cd livecam
 ```bash
 # 시스템 패키지 설치
 sudo apt update
-sudo apt install -y rpicam-apps ffmpeg python3-pip
+sudo apt install -y python3-picamera2 python3-libcamera ffmpeg python3-pip
 
 # Python 의존성 설치
 pip3 install -r requirements.txt --break-system-packages
@@ -43,6 +45,9 @@ pip3 install -r requirements.txt --break-system-packages
 # 사용자 권한 설정
 sudo usermod -a -G video $USER
 # 재로그인 필요
+
+# GPU 메모리 설정 (권장: 256MB)
+sudo raspi-config  # Advanced Options → Memory Split → 256
 ```
 
 ---
@@ -81,6 +86,11 @@ python3 picam2_webmain.py
 - **카메라 전환**: Camera 0 ↔ Camera 1 버튼 클릭
 - **해상도 변경**: 480p / 720p 버튼 선택
 - **상태 확인**: 실시간 통계 패널 모니터링
+- **하트비트**: LIVE (정상), DELAY (지연), OFFLINE (오프라인) 상태 표시
+
+#### 4. 시스템 종료
+- **웹 인터페이스**: 브라우저에서 `/exit` 페이지 접속 후 종료 버튼 클릭
+- **터미널**: `Ctrl+C` 입력 (카메라 자동 정리 후 종료)
 
 ### 📱 웹 인터페이스 미리보기
 ```

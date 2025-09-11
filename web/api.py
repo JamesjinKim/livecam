@@ -110,16 +110,17 @@ class CCTVWebAPI:
             # 카메라 관리자를 통해 종료
             await self.camera_manager.shutdown()
             
-            # 비동기적으로 서버 종료
+            # uvicorn 서버 강제 종료
+            import os
+            import signal
             import threading
             import time
-            import sys
             
-            def delayed_shutdown():
+            def force_shutdown():
                 time.sleep(1)
-                sys.exit(0)
+                os._exit(0)  # 즉시 종료
             
-            shutdown_thread = threading.Thread(target=delayed_shutdown)
+            shutdown_thread = threading.Thread(target=force_shutdown)
             shutdown_thread.daemon = True
             shutdown_thread.start()
             

@@ -42,30 +42,35 @@
         <div class="controls">
             <div class="control-section">
                 <h3>카메라 선택</h3>
-                <button class="camera-btn active" id="cam0-btn" onclick="switchCamera(0)">
-                    카메라 0
-                </button>
-                <button class="camera-btn" id="cam1-btn" onclick="switchCamera(1)">
-                    카메라 1
-                </button>
+                <div class="button-group">
+                    <button class="control-btn camera-btn active" id="cam0-btn" onclick="switchCamera(0)">
+                        카메라 0
+                    </button>
+                    <button class="control-btn camera-btn" id="cam1-btn" onclick="switchCamera(1)">
+                        카메라 1
+                    </button>
+                </div>
             </div>
             
             <div class="control-section">
                 <h3>해상도 선택</h3>
-                <button class="resolution-btn active" id="res-640-btn" onclick="changeResolution('640x480')">
-                    📺 480p (640×480)
-                </button>
-                <button class="resolution-btn" id="res-720-btn" onclick="changeResolution('1280x720')">
-                    📺 720p (1280×720)
-                </button>
+                <div class="button-group">
+                    <button class="control-btn resolution-btn active" id="res-640-btn" onclick="changeResolution('640x480')">
+                        📺 480p (640×480)
+                    </button>
+                    <button class="control-btn resolution-btn" id="res-720-btn" onclick="changeResolution('1280x720')">
+                        📺 720p (1280×720)
+                    </button>
+                </div>
             </div>
             
             <div class="control-section">
-                <h3>시스템 제어</h3>
-                <div style="display: flex; align-items: center; justify-content: center;">
-                    <a href="/exit" class="exit-btn">
+                <h3>시스템 상태</h3>
+                <div class="status-group">
+                    <!-- CCTV 종료 버튼 숨김 처리 -->
+                    <!-- <a href="/exit" class="exit-btn">
                         🛑  CCTV 종료
-                    </a>
+                    </a> -->
                     <!-- 하트비트 인디케이터 -->
                     <div class="heartbeat-container">
                         <div class="heartbeat-indicator green" id="heartbeat-indicator"></div>
@@ -79,7 +84,7 @@
             <img id="video-stream" src="/stream" alt="Picamera2 Live Stream">
         </div>
         
-        <p>Pi5 VideoCore VII GPU 하드웨어 가속</p>
+        <p>카메라0과 카메라1을 클릭하여 영상 상태를 확인 해주세요.</p>
     </div>
     
     <script src="/static/script.js"></script>

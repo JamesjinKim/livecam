@@ -202,6 +202,21 @@ class CameraManager:
                             frame_count += 1
                             total_frame_size += frame_size
                             
+                            # 프레임 카운터 자동 리셋 (10만 프레임마다 = 약 55분)
+                            if frame_count >= 100000:
+                                logger.info(f"[RESET] Auto-reset: Frame counter reached 100K, resetting for memory stability")
+                                frame_count = 1  # 나누기 오류 방지를 위해 1로 설정
+                                total_frame_size = frame_size
+                                start_time = time.time()
+                                last_fps_update = start_time
+                                # 통계 초기화
+                                self.stream_stats[self.current_camera] = {
+                                    "frame_count": 1, 
+                                    "avg_frame_size": frame_size, 
+                                    "fps": 30.0, 
+                                    "last_update": start_time
+                                }
+                            
                         except Exception as stream_error:
                             logger.error(f"[ERROR] 스트림 전송 오류: {stream_error}")
                             break
@@ -209,18 +224,23 @@ class CameraManager:
                     # FPS 통계 업데이트 (1초마다)
                     current_time = time.time()
                     if current_time - last_fps_update >= 1.0:
-                        fps = frame_count / (current_time - last_fps_update)
+                        elapsed = current_time - start_time
+                        fps = frame_count / elapsed if elapsed > 0 else 0
                         avg_size = total_frame_size / frame_count if frame_count > 0 else 0
                         
+                        # 누적 프레임 수 계산 (100K 리셋 고려)
+                        cumulative_frames = self.stream_stats[self.current_camera]["frame_count"]
+                        # 리셋된 경우가 아니면 누적
+                        if frame_count > 1:
+                            cumulative_frames += frame_count
+                        
                         self.stream_stats[self.current_camera] = {
-                            "frame_count": self.stream_stats[self.current_camera]["frame_count"] + frame_count,
+                            "frame_count": cumulative_frames,
                             "avg_frame_size": avg_size,
                             "fps": round(fps, 1),
                             "last_update": current_time
                         }
                         
-                        frame_count = 0
-                        total_frame_size = 0
                         last_fps_update = current_time
                     
                 except Exception as capture_error:
@@ -310,22 +330,34 @@ class CameraManager:
         logger.info("[SHUTDOWN] 모든 카메라 중지 완료")
 
 
-def signal_handler(sig, frame):
-    """시그널 핸들러"""
-    logger.info(f"[SIGNAL] Received signal {sig}")
-    sys.exit(0)
-
-
 def main():
     """메인 함수"""
     logger.info("[INIT] SHT CCTV 시스템 시작 (Picamera2 분리 버전)")
     
-    # 시그널 핸들러 등록
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
     # 카메라 관리자 생성 (핵심 로직)
     camera_manager = CameraManager()
+    
+    # 원래 시그널 핸들러 저장
+    original_sigint = signal.getsignal(signal.SIGINT)
+    
+    # 커스텀 시그널 핸들러 - 즉시 종료
+    def shutdown_handler(sig, frame):
+        logger.info(f"\n[SIGNAL] Received signal {sig} - Immediate shutdown")
+        logger.info("[SHUTDOWN] 카메라 정리 중...")
+        
+        # 카메라 정리 (동기적으로 처리)
+        for camera_id in list(camera_manager.camera_instances.keys()):
+            camera_manager.stop_camera_stream(camera_id)
+        
+        logger.info("[SHUTDOWN] 모든 카메라 중지 완료")
+        
+        # 즉시 강제 종료
+        import os
+        os._exit(0)
+    
+    # SIGINT 핸들러만 설정 (Ctrl+C용)
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
     
     # 웹 API 생성 (공개 인터페이스)
     web_api = CCTVWebAPI(camera_manager)
@@ -341,20 +373,35 @@ def main():
     # 기본 카메라 시작
     camera_manager.start_camera_stream(0)
     
-    # 서버 실행
+    # 서버 실행 - 시그널 핸들링 제어
     try:
-        uvicorn.run(
+        # uvicorn 서버 설정
+        config = uvicorn.Config(
             web_api.app,
             host="0.0.0.0",
             port=8001,
             log_level="info"
         )
-    except asyncio.CancelledError:
-        logger.info("[EXIT] Server cancelled")
+        server = uvicorn.Server(config)
+        
+        # uvicorn의 install_signal_handlers 메서드 오버라이드
+        server.install_signal_handlers = lambda: None
+        
+        # 우리의 시그널 핸들러 설정
+        signal.signal(signal.SIGINT, shutdown_handler) 
+        signal.signal(signal.SIGTERM, shutdown_handler)
+        
+        # 서버 실행
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(server.serve())
+        
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        pass  # 시그널 핸들러에서 처리됨
     except Exception as e:
         logger.error(f"[ERROR] Server error: {e}")
     finally:
-        cleanup()
+        pass  # cleanup은 시그널 핸들러에서 처리됨
 
 
 if __name__ == "__main__":
