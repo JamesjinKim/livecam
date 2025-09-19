@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse, HTMLResponse
 import uvicorn
 
 # 로깅 시스템 import
-from logger import setup_logger, get_logger, cleanup_logger, log_execution_time
+from reference.logger import setup_logger, get_logger, cleanup_logger, log_execution_time
 
 app = FastAPI()
 

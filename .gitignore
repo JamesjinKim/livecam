@@ -1,101 +1,45 @@
-# Compiled Object files
-*.o
-*.obj
-*.ko
-*.elf
-
-# Executables
-*.exe
-*.out
-*.app
-debug_utils
-demo_test_rpi
-test_camera_rpi
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-*.dll
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 *.so
-*.so.*
-*.dylib
+.Python
+env/
+venv/
+.env
 
-# Generated files
-*.tmp
-*.temp
-*.log
+# Videos - 영상 파일은 GitHub에 업로드하지 않음
+videos/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.h264
 
-# Build directories
-build/
-dist/
-bin/
-obj/
-
-# IDE files
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
-# OS generated files
+# OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
-# Camera capture files (large binary files)
-captures/
-demo/test_files/
-*.yuv
-*.raw
-*.bin
+# Logs
+*.log
+logs/
 
-# Video test files (generated during testing)
-test_*.mp4
-test_*.yuv
-videos/640x480/test_*
-videos/hd/test_*
-videos/tests/test_*
-blackbox_*.yuv
-blackbox_*.mp4
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
 
-# Temporary test images (keep source, ignore captures)
-demo/test_frame.jpg
+# Config files with secrets
+config.ini
+secrets.json
+*.key
 
-# CMake generated files
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-Makefile.cmake
-
-# Backup files
-*.bak
-*.backup
-Makefile.old
-
-# Python virtual environment
-venv/
-
-# Camera stream temp files
-streams/
-
-# Motion detection video files (exclude ALL video files and folders)
-videos/
-motion_event_*.mp4
-concat_*.txt
-temp_*.h264
-*.mp4
-*.h264
-*.avi
-*.mov
-*.wmv
-
-# Python cache
-__pycache__/
-*.pyc
+# Reference folder - 개발용 참고 파일들
+reference/
