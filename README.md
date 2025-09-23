@@ -1,141 +1,217 @@
-# SHT 듀얼 LIVE 카메라
+# 🎥 SHT 듀얼 LIVE 카메라
 
-라즈베리파이 5 기반 듀얼 카메라 CCTV 스트리밍 + 30초 연속 녹화 시스템
+**라즈베리파이 5 기반 듀얼 카메라 CCTV 시스템**
+실시간 웹 스트리밍 + 24시간 자동 녹화
 
-## 주요 기능
+---
 
-### CCTV 실시간 스트리밍
-- **듀얼/싱글 뷰**: 두 카메라 동시 보기 또는 개별 카메라 선택
-- **거울모드**: 좌우 반전 지원으로 자연스러운 화면
-- **다중 접속**: 최대 2명 동시 접속 (480p/720p)
-- **실시간 모니터링**: 웹 브라우저 기반 원격 접속
-- **하트비트**: LIVE/DELAY/ERROR 상태 실시간 표시
+## ✨ 주요 기능
 
-### 30초 연속 녹화
-- **24시간 녹화**: 카메라 0, 1 독립적 30초 단위 연속 녹화
-- **자동 관리**: 날짜별 폴더 생성 및 타임스탬프 파일명
-- **안정적 저장**: 끊김없는 연속 녹화로 블랙박스 기능
+### 📺 실시간 웹 스트리밍
+- **듀얼/싱글 뷰**: 두 카메라 동시 보기 또는 개별 선택
+- **거울모드**: 좌우 반전으로 자연스러운 화면
+- **다중 접속**: 최대 2명 동시 접속 지원
+- **해상도 선택**: 480p (2Mbps) / 720p (4Mbps)
+- **실시간 모니터링**: LIVE/OFFLINE 상태 + FPS/통계
 
-## 빠른 시작
+### 🎬 24시간 자동 녹화
+- **연속 녹화**: 30초 단위 끊김없는 24시간 녹화
+- **듀얼 카메라**: 두 카메라 독립적 동시 녹화
+- **GPU 가속**: H.264 하드웨어 인코딩 (5Mbps)
+- **자동 관리**: 타임스탬프 파일명, 실시간 저장
 
-### 필수 요구사항
-- **하드웨어**: Raspberry Pi 5, OV5647 카메라 모듈 ×2
+---
+
+## 🚀 빠른 시작
+
+### 📋 필수 요구사항
+- **하드웨어**: Raspberry Pi 5 + OV5647 카메라 ×2
 - **OS**: Raspberry Pi OS (64-bit)
 - **Python**: 3.11+
 
-### 설치
+### ⚙️ 설치
 ```bash
-# 시스템 패키지 설치
+# 1. 시스템 패키지 설치
 sudo apt update
-sudo apt install -y python3-picamera2 python3-libcamera ffmpeg python3-pip
+sudo apt install -y python3-picamera2 python3-libcamera ffmpeg
 
-# Python 의존성 설치
-pip3 install fastapi uvicorn picamera2 opencv-python numpy psutil --break-system-packages
+# 2. Python 패키지 설치
+pip3 install fastapi uvicorn opencv-python numpy psutil
 
-# 사용자 권한 설정
+# 3. 사용자 권한 설정
 sudo usermod -a -G video $USER
 # 재로그인 필요
 
-# GPU 메모리 설정 (권장: 256MB)
+# 4. GPU 메모리 설정 (권장: 256MB)
 sudo raspi-config  # Advanced Options → Memory Split → 256
 ```
 
-## 사용 방법
+---
 
-### 1. CCTV 스트리밍 시작
+## 📖 사용 방법
+
+### 1️⃣ 시스템 시작
 ```bash
 python3 webmain.py
 ```
 
-### 2. 웹 접속
+### 2️⃣ 웹 접속
 ```
-브라우저에서 접속: http://라즈베리파이_IP:8001
-```
-
-### 3. 30초 연속 녹화 (선택사항)
-```bash
-# 터미널 1: 카메라 0 녹화
-python3 rec_cam0.py
-
-# 터미널 2: 카메라 1 녹화
-python3 rec_cam1.py
+브라우저에서: http://라즈베리파이IP:8001
 ```
 
-### 4. 웹 인터페이스 사용
-- **뷰 모드**: Dual View / Camera 0 / Camera 1 버튼으로 전환
-- **해상도**: 480p / 720p 선택
-- **상태 확인**: 실시간 통계 및 하트비트 모니터링
+### 3️⃣ 웹 인터페이스 사용
+- **🔄 뷰 전환**: `Dual View` / `Camera 0` / `Camera 1` 버튼
+- **📐 해상도**: `480p` / `720p` 선택
+- **📊 모니터링**: 실시간 FPS, 프레임 수, 연결 상태 확인
 
-## 파일 저장 위치
+### 4️⃣ 시스템 종료
+- **방법 1**: `Ctrl+C` (터미널)
+- **방법 2**: 웹 UI 종료 버튼
+
+---
+
+## 📁 녹화 파일 저장
+
+### 저장 위치
 ```
-videos/cam_rec/
-├── cam0/
-│   └── 250916/    # YYMMDD 날짜별 폴더
-│       ├── cam0_20250916_143025.mp4
-│       └── cam0_20250916_143055.mp4
-└── cam1/
-    └── 250916/
-        ├── cam1_20250916_143025.mp4
-        └── cam1_20250916_143055.mp4
+videos/
+├── cam0/              # 카메라 0 녹화 파일
+│   ├── cam0_20250923_143025.mp4
+│   ├── cam0_20250923_143055.mp4
+│   └── cam0_20250923_143125.mp4
+└── cam1/              # 카메라 1 녹화 파일
+    ├── cam1_20250923_143025.mp4
+    ├── cam1_20250923_143055.mp4
+    └── cam1_20250923_143125.mp4
 ```
 
-## 성능 지표
-| 기능 | CPU 사용률 | 메모리 | 비고 |
-|------|------------|--------|------|
-| CCTV (480p) | ~7% | 40MB | 듀얼 뷰 |
-| CCTV (720p) | ~11% | 50MB | 듀얼 뷰 |
-| 녹화 (720p) | ~8-10% | 30-40MB | 카메라당 |
-| 전체 시스템 | ~25-30% | 120MB | 모든 기능 |
+### 파일 규칙
+- **형식**: `cam{카메라번호}_{YYYYMMDD}_{HHMMSS}.mp4`
+- **길이**: 30초 (자동 분할)
+- **인코딩**: H.264, 5Mbps, 30fps
+- **크기**: 약 20MB/파일 (720p 기준)
 
-## 문제 해결
+---
 
-### 카메라 인식 오류
+## 📊 성능 정보
+
+### 시스템 리소스 (Ra스베리파이 5 기준)
+| 기능 | CPU | 메모리 | 대역폭 | 파일 크기 |
+|------|-----|--------|--------|-----------|
+| 듀얼 스트리밍 (480p) | ~10% | 50MB | ~2Mbps | - |
+| 듀얼 스트리밍 (720p) | ~15% | 70MB | ~4Mbps | - |
+| 듀얼 녹화 (720p) | ~12% | 60MB | 5Mbps/카메라 | 20MB/30초 |
+| **전체 시스템** | **~25%** | **120MB** | **~14Mbps** | **2.8GB/시간** |
+
+---
+
+## 🔧 문제 해결
+
+### ❌ 카메라 인식 오류
 ```bash
 # 카메라 연결 확인
 rpicam-hello --list-cameras
 
-# Picamera2 라이브러리 확인
+# 라이브러리 확인
 python3 -c "from picamera2 import Picamera2; print('OK')"
 
 # 권한 확인
 groups | grep video
 ```
 
-### 스트리밍 문제
+### 🌐 스트리밍 문제
 - 네트워크 대역폭 확인
 - 해상도를 480p로 낮춰서 테스트
-- GPU 메모리 할당 확인: `vcgencmd get_mem gpu`
+- 다른 기기에서 접속 테스트
 
-### 녹화 문제
-- 디스크 공간 확인: `df -h`
-- 카메라 사용 중인 프로세스 확인: `ps aux | grep python3`
-
-## 고급 설정
-
-### systemd 자동 시작
+### 💾 녹화 문제
 ```bash
-# /etc/systemd/system/cctv.service
+# 디스크 공간 확인
+df -h
+
+# 실행 중인 프로세스 확인
+ps aux | grep python3
+
+# GPU 메모리 확인
+vcgencmd get_mem gpu
+```
+
+### 🔌 포트 충돌
+```bash
+# 8001 포트 사용 중인 프로세스 확인
+sudo lsof -i :8001
+
+# 기존 프로세스 종료
+sudo pkill -f webmain.py
+```
+
+---
+
+## ⚡ 고급 설정
+
+### 🔄 자동 시작 설정 (systemd)
+```bash
+# 서비스 파일 생성
+sudo nano /etc/systemd/system/cctv.service
+```
+
+```ini
 [Unit]
-Description=CCTV Streaming System
+Description=SHT CCTV Streaming System
 After=multi-user.target
 
 [Service]
 Type=simple
-User=shinho
-WorkingDirectory=/home/shinho/shinho/livecam1
+User=pi
+WorkingDirectory=/home/pi/livecam
 ExecStart=/usr/bin/python3 webmain.py
 Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```bash
-# 서비스 활성화
+# 서비스 활성화 및 시작
 sudo systemctl enable cctv.service
 sudo systemctl start cctv.service
+
+# 상태 확인
+sudo systemctl status cctv.service
+```
+
+### 🔍 로그 확인
+```bash
+# 실시간 로그 보기
+sudo journalctl -u cctv.service -f
+
+# 최근 로그 확인
+sudo journalctl -u cctv.service --since "1 hour ago"
 ```
 
 ---
 
-**마지막 업데이트**: 2025-09-16 (거울모드 추가)
+## 🛠️ 기술 사양
+
+- **프레임워크**: FastAPI + Picamera2
+- **스트리밍**: MJPEG (lores 스트림)
+- **녹화**: H.264 GPU 인코딩 (main 스트림)
+- **웹 UI**: Vanilla JavaScript + 반응형 CSS
+- **포트**: 8001 (HTTP)
+
+---
+
+## 📞 지원
+
+문제가 발생하면 다음을 확인하세요:
+1. 카메라 연결 상태
+2. 네트워크 연결
+3. GPU 메모리 설정 (256MB)
+4. 디스크 여유 공간
+5. 시스템 로그
+
+---
+
+**마지막 업데이트**: 2025-09-23 (통합 시스템 완성)

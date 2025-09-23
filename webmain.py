@@ -10,9 +10,7 @@ import sys
 import time
 import threading
 import atexit
-import queue
-import cv2
-import numpy as np
+import io
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Set
@@ -22,7 +20,10 @@ import uvicorn
 # Picamera2 imports
 try:
     from picamera2 import Picamera2
+    from picamera2.encoders import H264Encoder
+    from picamera2.outputs import FfmpegOutput
     import libcamera
+    import cv2
 except ImportError as e:
     print(f"[ERROR] Picamera2 not installed: {e}")
     print("[INSTALL] Run: sudo apt install -y python3-picamera2")
@@ -36,127 +37,178 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-class FrameRecorder:
-    """프레임 기반 녹화 클래스 - 스트리밍 중단 없이 녹화"""
+class GPURecorder:
+    """GPU 가속 H.264 녹화 클래스 - rec_dual.py 방식"""
 
-    def __init__(self, camera_id: int, save_dir: str = None):
+    def __init__(self, camera_id: int, picam2_instance):
         self.camera_id = camera_id
-        self.save_dir = Path(save_dir or f"videos/cam{camera_id}")
+        self.picam2 = picam2_instance  # 공유 Picamera2 인스턴스
+        self.save_dir = Path(f"videos/cam{camera_id}")
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
         # 녹화 상태
         self.is_recording = False
-        self.frame_queue = queue.Queue(maxsize=900)  # 30초 버퍼 (30fps)
+        self.encoder = None
+        self.current_output = None
+        self.current_file = None
         self.recording_thread = None
-        self.video_writer = None
+        self.continuous_recording = False
 
-        logger.info(f"[RECORDER] 카메라 {camera_id} 녹화기 초기화")
+        # 통계
+        self.recording_count = 0
+        self.success_count = 0
+        self.fail_count = 0
+        self.total_size = 0
 
-    def add_frame(self, frame_data: bytes):
-        """프레임 추가 (JPEG 바이트)"""
-        if not self.is_recording:
-            return
+        logger.info(f"[GPU-RECORDER] 카메라 {camera_id} GPU 녹화기 초기화")
+
+    def _generate_filename(self):
+        """파일명 생성"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return self.save_dir / f"cam{self.camera_id}_{timestamp}.mp4"
+
+    def _record_single_video(self, duration: int = 31):
+        """단일 비디오 녹화 (GPU 가속)"""
+        start_time = datetime.now()
+        start_str = start_time.strftime("%H:%M:%S")
 
         try:
-            # 큐가 가득 차면 오래된 프레임 제거
-            if self.frame_queue.full():
-                self.frame_queue.get_nowait()
+            # 파일명 생성
+            output_path = self._generate_filename()
+            logger.info(f"[{start_str}] [CAM{self.camera_id}] GPU 녹화 시작: {output_path.name}")
 
-            self.frame_queue.put_nowait(frame_data)
-        except queue.Full:
-            pass
+            # 현재 파일 추적
+            self.current_file = output_path
 
-    def start_recording(self, duration: int = 30):
-        """녹화 시작"""
-        if self.is_recording:
-            logger.warning(f"[RECORDER] 카메라 {self.camera_id} 이미 녹화 중")
+            # H.264 인코더 생성 (GPU 하드웨어 가속)
+            self.encoder = H264Encoder(
+                bitrate=5000000,  # 5Mbps
+                repeat=True,       # SPS/PPS 반복
+                iperiod=30,        # I-프레임 주기
+                framerate=30       # 30fps
+            )
+
+            # MP4 파일 출력 설정
+            self.current_output = FfmpegOutput(str(output_path))
+            self.encoder.output = self.current_output
+
+            # 녹화 시작 (GPU 인코딩)
+            self.picam2.start_encoder(self.encoder)
+            self.is_recording = True
+
+            # 지정된 시간 동안 녹화
+            time.sleep(duration)
+
+            # 녹화 중지
+            self.picam2.stop_encoder(self.encoder)
+            self.is_recording = False
+
+            # 인코더 정리 (재사용 방지)
+            self.encoder = None
+            self.current_output = None
+
+            # 파일 크기 확인
+            if output_path.exists():
+                file_size = output_path.stat().st_size
+                size_mb = file_size / (1024 * 1024)
+                end_time = datetime.now()
+                end_str = end_time.strftime("%H:%M:%S")
+                duration_actual = (end_time - start_time).total_seconds()
+
+                logger.info(f"[{end_str}] [CAM{self.camera_id}] GPU 녹화 완료: {output_path.name} ({size_mb:.1f}MB, {duration_actual:.1f}초)")
+
+                # 통계 업데이트
+                self.success_count += 1
+                self.total_size += file_size
+                self.current_file = None
+                return True
+            else:
+                logger.error(f"[CAM{self.camera_id}] 파일 생성 실패: {output_path.name}")
+                self.fail_count += 1
+                return False
+
+        except Exception as e:
+            logger.error(f"카메라 {self.camera_id} GPU 녹화 오류: {e}")
+            self.is_recording = False
+            self.fail_count += 1
             return False
 
-        self.is_recording = True
+    def start_continuous_recording(self, interval: int = 31):
+        """연속 녹화 시작 (30초 단위)"""
+        if self.continuous_recording:
+            logger.warning(f"[GPU-RECORDER] 카메라 {self.camera_id} 이미 연속 녹화 중 - 무시")
+            return True  # 이미 실행 중이면 성공으로 처리
+
+        logger.info(f"[GPU-RECORDER] 카메라 {self.camera_id} 연속 녹화 시작 요청")
+        self.continuous_recording = True
         self.recording_thread = threading.Thread(
-            target=self._record_video,
-            args=(duration,),
+            target=self._continuous_recording_loop,
+            args=(interval,),
             daemon=True
         )
         self.recording_thread.start()
-        logger.info(f"[RECORDER] 카메라 {self.camera_id} 녹화 시작 ({duration}초)")
+        logger.info(f"[GPU-RECORDER] 카메라 {self.camera_id} 연속 녹화 시작 완료 ({interval}초 간격)")
         return True
+
+    def _continuous_recording_loop(self, interval: int):
+        """연속 녹화 루프 (스레드에서 실행)"""
+        logger.info(f"[CAM{self.camera_id}] 연속 녹화 루프 시작")
+
+        while self.continuous_recording:
+            self.recording_count += 1
+
+            # 녹화 실행
+            success = self._record_single_video(interval)
+
+            if success:
+                logger.info(f"[CAM{self.camera_id}] 진행: 성공 {self.success_count}개 / 실패 {self.fail_count}개 / 총 {self.total_size/1024/1024:.1f}MB")
+            else:
+                logger.warning(f"[CAM{self.camera_id}] 실패: {self.recording_count}번째 녹화")
+                # 실패해도 계속 진행 (중지하지 않음)
+
+            # 다음 녹화를 위한 대기
+            if self.continuous_recording:
+                logger.info(f"[CAM{self.camera_id}] 다음 녹화까지 0.5초 대기 중...")
+                time.sleep(0.5)
+                logger.info(f"[CAM{self.camera_id}] 연속 녹화 상태 확인: {self.continuous_recording}")
+
+        logger.info(f"[CAM{self.camera_id}] 연속 녹화 루프 종료 (continuous_recording = {self.continuous_recording})")
 
     def stop_recording(self):
         """녹화 중지"""
-        self.is_recording = False
+        self.continuous_recording = False
+
+        # 현재 녹화 중이면 중지
+        if self.is_recording and self.encoder:
+            try:
+                self.picam2.stop_encoder(self.encoder)
+                self.is_recording = False
+                self.encoder = None  # 인코더 정리
+                self.current_output = None
+                logger.info(f"[GPU-RECORDER] 카메라 {self.camera_id} 녹화 중지")
+            except Exception as e:
+                # 이미 중지된 경우 무시
+                if "already stopped" not in str(e).lower():
+                    logger.error(f"녹화 중지 오류: {e}")
+                self.is_recording = False
+                self.encoder = None
+                self.current_output = None
+
+        # 스레드 종료 대기
         if self.recording_thread:
             self.recording_thread.join(timeout=2)
-        logger.info(f"[RECORDER] 카메라 {self.camera_id} 녹화 중지")
 
-    def _record_video(self, duration: int):
-        """비디오 녹화 스레드"""
-        # 날짜별 폴더 생성
-        date_folder = self.save_dir / datetime.now().strftime("%y%m%d")
-        date_folder.mkdir(parents=True, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = date_folder / f"cam{self.camera_id}_{timestamp}.mp4"
-
-        try:
-            # OpenCV VideoWriter 설정
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            fps = 30.0
-            frame_size = (640, 480)
-
-            writer = cv2.VideoWriter(
-                str(output_path),
-                fourcc,
-                fps,
-                frame_size
-            )
-
-            if not writer.isOpened():
-                logger.error(f"[RECORDER] VideoWriter 열기 실패")
-                return
-
-            start_time = time.time()
-            frame_count = 0
-
-            logger.info(f"[RECORDER] 녹화 시작: {output_path.name}")
-
-            # 지정된 시간 동안 녹화
-            while self.is_recording and (time.time() - start_time) < duration:
-                try:
-                    # 큐에서 JPEG 프레임 가져오기
-                    frame_data = self.frame_queue.get(timeout=0.1)
-
-                    # JPEG를 OpenCV 형식으로 변환
-                    nparr = np.frombuffer(frame_data, np.uint8)
-                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-                    if frame is not None:
-                        # 필요시 크기 조정
-                        if frame.shape[:2] != (frame_size[1], frame_size[0]):
-                            frame = cv2.resize(frame, frame_size)
-
-                        writer.write(frame)
-                        frame_count += 1
-
-                except queue.Empty:
-                    continue
-                except Exception as e:
-                    logger.error(f"[RECORDER] 프레임 처리 오류: {e}")
-
-            # 녹화 완료
-            writer.release()
-
-            # 파일 정보 출력
-            if output_path.exists():
-                file_size = output_path.stat().st_size / (1024 * 1024)
-                actual_duration = time.time() - start_time
-                logger.info(f"[RECORDER] 녹화 완료: {output_path.name}")
-                logger.info(f"           크기: {file_size:.1f}MB, 시간: {actual_duration:.1f}초, 프레임: {frame_count}")
-
-        except Exception as e:
-            logger.error(f"[RECORDER] 녹화 오류: {e}")
-        finally:
-            self.is_recording = False
+        # 미완성 파일 처리
+        if self.current_file and self.current_file.exists():
+            try:
+                file_size = self.current_file.stat().st_size
+                if file_size < 10240:  # 10KB 미만 파일은 삭제
+                    self.current_file.unlink()
+                    logger.info(f"[CAM{self.camera_id}] 손상된 파일 삭제: {self.current_file.name}")
+                else:
+                    logger.info(f"[CAM{self.camera_id}] 마지막 파일 보존: {self.current_file.name} ({file_size/1024/1024:.1f}MB)")
+            except Exception as e:
+                logger.error(f"파일 처리 오류: {e}")
 
 
 class CameraManager:
@@ -213,10 +265,11 @@ class CameraManager:
     def start_camera_stream(self, camera_id: int, resolution: str = None) -> bool:
         """카메라 스트리밍 시작 - GPU 버전"""
         logger.info(f"[START] 카메라 {camera_id} 스트리밍 시작 요청 (해상도: {resolution or self.current_resolution})")
-        
+
+        # 기존 카메라 인스턴스가 있으면 재사용 (연속 녹화 유지)
         if camera_id in self.camera_instances:
-            logger.info(f"기존 카메라 {camera_id} 인스턴스 종료 중...")
-            self.stop_camera_stream(camera_id)
+            logger.info(f"기존 카메라 {camera_id} 인스턴스 재사용 (녹화 유지)")
+            return True
         
         # 해상도 설정
         if resolution is None:
@@ -230,14 +283,18 @@ class CameraManager:
             # Picamera2 인스턴스 생성
             picam2 = Picamera2(camera_num=camera_id)
             
-            # Pi5 최적화 설정 - ISP 리소스 경합 해결
-            # 카메라별 다른 포맷 사용으로 색상 문제 방지
+            # Pi5 듀얼 스트림 최적화 설정
+            # 메인: H.264 녹화 우선, 서브: MJPEG 스트리밍
             config = picam2.create_video_configuration(
                 main={
                     "size": (width, height),
-                    "format": "RGB888" if camera_id == 0 else "YUV420"  # 카메라별 다른 포맷으로 ISP 경합 방지
+                    "format": "YUV420"  # H.264 녹화 최적화 (GPU 가속)
                 },
-                buffer_count=2,  # 버퍼 수 감소로 리소스 분산 (4->2)
+                lores={
+                    "size": (width, height),  # 스트리밍도 동일 해상도 유지
+                    "format": "RGB888"        # MJPEG 스트리밍 최적화
+                },
+                buffer_count=2,  # 버퍼 수 감소로 리소스 분산
                 queue=False,     # 레이턴시 최소화
                 transform=libcamera.Transform(hflip=True)  # 좌우 반전 (거울모드)
             )
@@ -247,15 +304,14 @@ class CameraManager:
             
             self.camera_instances[camera_id] = picam2
 
-            # 녹화기 초기화
+            # 녹화기 초기화 (GPU 레코더 사용)
             if camera_id not in self.recorders:
-                self.recorders[camera_id] = FrameRecorder(camera_id)
+                self.recorders[camera_id] = GPURecorder(camera_id, picam2)
 
             logger.info(f"[OK] Picamera2 카메라 {camera_id} 시작됨 ({width}x{height})")
 
-            # 녹화가 활성화된 경우 자동 시작
-            if self.recording_enabled:
-                self.start_continuous_recording(camera_id)
+            # 녹화는 나중에 enable_recording()에서 일괄 시작
+            # (듀얼 모드 시 타이밍 이슈 방지)
 
             return True
             
@@ -266,23 +322,32 @@ class CameraManager:
             return False
     
     def stop_camera_stream(self, camera_id: int):
-        """카메라 스트리밍 중지"""
-        # 녹화 중지
-        if camera_id in self.recorders:
-            self.recorders[camera_id].stop_recording()
+        """카메라 스트리밍 중지 - 연속 녹화는 유지"""
+        # 연속 녹화는 중지하지 않음 (24시간 연속 녹화 유지)
+        # 듀얼 모드에서는 카메라 인스턴스를 유지하고 스트리밍만 중지
 
-        # 연속 녹화 스레드 종료
-        if camera_id in self.recording_threads:
-            self.recording_threads[camera_id] = False
+        # 듀얼 모드인 경우 카메라 인스턴스 유지 (녹화 지속을 위해)
+        if self.dual_mode and camera_id in self.camera_instances:
+            logger.info(f"[DUAL-MODE] 카메라 {camera_id} 스트리밍 중지 (녹화 유지)")
+            # 통계만 초기화, 카메라 인스턴스는 유지
+            self.stream_stats[camera_id] = {
+                "frame_count": 0,
+                "avg_frame_size": 0,
+                "fps": 0,
+                "last_update": 0,
+                "recording": camera_id in self.recorders and self.recorders[camera_id].continuous_recording
+            }
+            return
 
+        # 싱글 모드로 전환 시에만 카메라 완전 중지
         if camera_id in self.camera_instances:
             try:
-                logger.info(f"[STOP] 카메라 {camera_id} 중지 중...")
+                logger.info(f"[STOP] 카메라 {camera_id} 완전 중지 중...")
                 picam2 = self.camera_instances[camera_id]
                 picam2.stop()
                 picam2.close()
                 del self.camera_instances[camera_id]
-                
+
                 # 통계 초기화
                 self.stream_stats[camera_id] = {
                     "frame_count": 0,
@@ -291,11 +356,11 @@ class CameraManager:
                     "last_update": 0,
                     "recording": False
                 }
-                
+
                 # 클라이언트 목록 클리어
                 self.active_clients.clear()
-                
-                logger.info(f"[OK] 카메라 {camera_id} 중지됨")
+
+                logger.info(f"[OK] 카메라 {camera_id} 완전 중지됨")
             except Exception as e:
                 logger.error(f"[ERROR] 카메라 {camera_id} 중지 실패: {e}")
     
@@ -335,12 +400,14 @@ class CameraManager:
                         logger.info(f"[STREAM] 카메라 {target_camera} 중지됨, 스트림 종료")
                         break
                     
-                    # Picamera2로 직접 JPEG 프레임 캡처 (원본과 동일)
-                    import io
-                    stream = io.BytesIO()
-                    picam2.capture_file(stream, format='jpeg')
-                    frame_data = stream.getvalue()
-                    stream.close()
+                    # Picamera2 lores 스트림에서 RGB 배열 캡처 후 JPEG 변환 (스트리밍 전용)
+                    rgb_array = picam2.capture_array('lores')  # lores 스트림에서 RGB 배열 캡처
+
+                    # RGB를 JPEG로 인코딩
+                    success, frame_data = cv2.imencode('.jpg', rgb_array, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    if not success:
+                        continue
+                    frame_data = frame_data.tobytes()
                     
                     if not frame_data:
                         logger.warning(f"[WARN] 카메라 {target_camera}에서 데이터 없음")
@@ -348,9 +415,8 @@ class CameraManager:
                     
                     frame_size = len(frame_data)
 
-                    # 녹화기에 프레임 전달 (비동기)
-                    if recorder and recorder.is_recording:
-                        recorder.add_frame(frame_data)
+                    # GPU 녹화기는 별도 스레드에서 자동으로 처리됨
+                    # (프레임 전달 불필요)
 
                     # 프레임 크기 검증 (원본과 동일)
                     if frame_min_size < frame_size < frame_max_size:
@@ -476,59 +542,61 @@ class CameraManager:
         
         return True
     
-    def start_continuous_recording(self, camera_id: int, interval: int = 30):
-        """연속 녹화 시작"""
+    def start_continuous_recording(self, camera_id: int, interval: int = 31):
+        """GPU 가속 연속 녹화 시작"""
         if camera_id not in self.recorders:
             logger.error(f"[ERROR] 카메라 {camera_id} 레코더 없음")
             return
 
-        def continuous_record():
-            self.recording_threads[camera_id] = True
-            while self.recording_threads.get(camera_id, False):
-                recorder = self.recorders[camera_id]
-                recorder.start_recording(duration=interval)
+        # GPU 레코더의 연속 녹화 시작
+        recorder = self.recorders[camera_id]
+        recorder.start_continuous_recording(interval)
 
-                # 통계 업데이트
-                self.stream_stats[camera_id]["recording"] = True
+        # 통계 업데이트
+        self.stream_stats[camera_id]["recording"] = True
+        self.recording_threads[camera_id] = True
 
-                # 녹화 완료 대기
-                time.sleep(interval + 1)
-
-            self.stream_stats[camera_id]["recording"] = False
-
-        thread = threading.Thread(target=continuous_record, daemon=True)
-        thread.start()
-        logger.info(f"[RECORDING] 카메라 {camera_id} 연속 녹화 시작 ({interval}초 간격)")
+        logger.info(f"[GPU-RECORDING] 카메라 {camera_id} GPU 연속 녹화 시작 ({interval}초 간격)")
 
     def enable_recording(self):
-        """모든 활성 카메라에 대해 녹화 활성화"""
+        """모든 활성 카메라에 대해 GPU 녹화 활성화"""
         self.recording_enabled = True
-        for camera_id in self.camera_instances.keys():
+        active_cameras = list(self.camera_instances.keys())
+
+        for camera_id in active_cameras:
             self.start_continuous_recording(camera_id)
-        logger.info("[RECORDING] 녹화 기능 활성화")
+            logger.info(f"[GPU-RECORDING] 카메라 {camera_id} 연속 녹화 시작")
+
+        logger.info(f"[GPU-RECORDING] 녹화 기능 활성화 완료 (활성 카메라: {active_cameras})")
 
     def disable_recording(self):
         """모든 녹화 비활성화"""
         self.recording_enabled = False
         for camera_id in self.recording_threads.keys():
             self.recording_threads[camera_id] = False
-        for recorder in self.recorders.values():
-            recorder.stop_recording()
-        logger.info("[RECORDING] 녹화 기능 비활성화")
 
-    def start_single_recording(self, camera_id: int, duration: int = 30):
-        """30초 단위 녹화 (웹 UI용)"""
+        # GPU 레코더 중지
+        for camera_id, recorder in self.recorders.items():
+            recorder.stop_recording()
+            self.stream_stats[camera_id]["recording"] = False
+
+        logger.info("[GPU-RECORDING] 모든 GPU 녹화 비활성화")
+
+    def start_single_recording(self, camera_id: int, duration: int = 31):
+        """단일 GPU 녹화 (웹 UI용)"""
         if camera_id not in self.recorders:
             logger.error(f"[ERROR] 카메라 {camera_id} 레코더 없음")
             return False
 
-        if self.recorders[camera_id].is_recording:
-            logger.warning(f"[RECORDER] 카메라 {camera_id} 이미 녹화 중")
+        recorder = self.recorders[camera_id]
+        if recorder.is_recording or recorder.continuous_recording:
+            logger.warning(f"[GPU-RECORDER] 카메라 {camera_id} 이미 녹화 중")
             return False
 
-        self.recorders[camera_id].start_recording(duration=duration)
-        logger.info(f"[RECORDING] 카메라 {camera_id} 단일 녹화 시작 ({duration}초)")
-        return True
+        # 단일 녹화 실행
+        success = recorder._record_single_video(duration)
+        logger.info(f"[GPU-RECORDING] 카메라 {camera_id} 단일 녹화 {'성공' if success else '실패'} ({duration}초)")
+        return success
 
     def stop_single_recording(self, camera_id: int):
         """단일 녹화 중지 (웹 UI용)"""
@@ -564,38 +632,47 @@ class CameraManager:
         }
     
     def enable_dual_mode(self) -> bool:
-        """듀얼 카메라 모드 활성화"""
+        """듀얼 카메라 모드 활성화 - 두 카메라 동시 녹화"""
         logger.info("[DUAL] 듀얼 카메라 모드 활성화 중...")
-        
-        # 두 카메라 모두 시작
+
+        # 카메라 0 시작
         success_cam0 = self.start_camera_stream(0, self.current_resolution)
-        success_cam1 = self.start_camera_stream(1, self.current_resolution)
-        
-        if success_cam0 and success_cam1:
-            self.dual_mode = True
-            logger.info("[DUAL] 듀얼 카메라 모드 활성화 완료")
-            return True
-        else:
-            # 실패 시 정리
-            if 0 in self.camera_instances:
-                self.stop_camera_stream(0)
-            if 1 in self.camera_instances:
-                self.stop_camera_stream(1)
-            self.dual_mode = False
-            logger.error("[DUAL] 듀얼 카메라 모드 활성화 실패")
+        if not success_cam0:
+            logger.error("[DUAL] 카메라 0 시작 실패")
             return False
+
+        # 잠시 대기 (카메라 초기화 시간)
+        time.sleep(0.5)
+
+        # 카메라 1 시작
+        success_cam1 = self.start_camera_stream(1, self.current_resolution)
+        if not success_cam1:
+            logger.error("[DUAL] 카메라 1 시작 실패")
+            # 카메라 0도 정리
+            self.stop_camera_stream(0)
+            return False
+
+        self.dual_mode = True
+        logger.info("[DUAL] 듀얼 카메라 모드 활성화 완료 (cam0, cam1 모두 활성)")
+
+        # 두 카메라 모두 활성화됨을 확인
+        logger.info(f"[DUAL] 활성 카메라: {list(self.camera_instances.keys())}")
+        logger.info(f"[DUAL] 활성 녹화기: {list(self.recorders.keys())}")
+
+        return True
     
     def disable_dual_mode(self):
-        """듀얼 카메라 모드 비활성화"""
-        logger.info("[DUAL] 듀얼 카메라 모드 비활성화 중...")
-        
-        # 현재 카메라가 아닌 카메라 정지
-        other_camera = 1 if self.current_camera == 0 else 0
-        if other_camera in self.camera_instances:
-            self.stop_camera_stream(other_camera)
-        
+        """듀얼 카메라 모드 비활성화 - 연속 녹화는 유지"""
+        logger.info("[DUAL] 듀얼 카메라 모드 비활성화 중... (연속 녹화 유지)")
+
+        # 듀얼 모드 플래그 비활성화
         self.dual_mode = False
-        logger.info("[DUAL] 듀얼 카메라 모드 비활성화 완료")
+
+        # 연속 녹화는 중지하지 않음 - 카메라 인스턴스는 유지
+        # 스트리밍 뷰만 싱글 모드로 전환
+        # 모든 카메라는 백그라운드에서 녹화 계속 진행
+
+        logger.info("[DUAL] 듀얼 카메라 모드 비활성화 완료 (모든 카메라 녹화 유지)")
     
     async def shutdown(self):
         """시스템 종료"""
@@ -650,11 +727,16 @@ def main():
     
     atexit.register(cleanup)
     
-    # 기본 카메라 시작 중요한 부분임
-    camera_manager.start_camera_stream(0)
+    # 듀얼 카메라 모드 시작 (두 카메라 동시 녹화)
+    success = camera_manager.enable_dual_mode()
 
-    #중요한 부분임 녹화 기능 활성화 (선택적)
-    #camera_manager.enable_recording()  # 자동 연속 녹화를 원할 경우 주석 해제
+    if not success:
+        # 듀얼 모드 실패 시 카메라 0만 시작
+        logger.warning("[INIT] 듀얼 모드 실패, 카메라 0만 시작")
+        camera_manager.start_camera_stream(0)
+
+    # GPU 가속 연속 녹화 활성화 (모든 활성 카메라에 대해)
+    camera_manager.enable_recording()  # GPU 자동 연속 녹화 시작
     
     # 서버 실행 - 시그널 핸들링 제어
     try:
