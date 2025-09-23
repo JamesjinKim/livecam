@@ -32,6 +32,9 @@ except ImportError as e:
 # 웹 API 임포트
 from web.api import CCTVWebAPI
 
+# 설정 관리자 임포트
+from config_manager import config_manager
+
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -43,7 +46,10 @@ class GPURecorder:
     def __init__(self, camera_id: int, picam2_instance):
         self.camera_id = camera_id
         self.picam2 = picam2_instance  # 공유 Picamera2 인스턴스
-        self.save_dir = Path(f"videos/cam{camera_id}")
+
+        # 설정에서 저장 경로 가져오기
+        storage_path = config_manager.get_storage_path(str(camera_id))
+        self.save_dir = Path(storage_path)
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
         # 녹화 상태
@@ -67,8 +73,12 @@ class GPURecorder:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return self.save_dir / f"cam{self.camera_id}_{timestamp}.mp4"
 
-    def _record_single_video(self, duration: int = 31):
+    def _record_single_video(self, duration: int = None):
         """단일 비디오 녹화 (GPU 가속)"""
+        # 설정에서 녹화 시간 가져오기
+        if duration is None:
+            duration = config_manager.get_segment_duration()
+
         start_time = datetime.now()
         start_str = start_time.strftime("%H:%M:%S")
 
@@ -81,11 +91,15 @@ class GPURecorder:
             self.current_file = output_path
 
             # H.264 인코더 생성 (GPU 하드웨어 가속)
+            # 설정에서 인코딩 파라미터 가져오기
+            bitrate = config_manager.get_bitrate()
+            framerate = config_manager.get_framerate()
+
             self.encoder = H264Encoder(
-                bitrate=5000000,  # 5Mbps
-                repeat=True,       # SPS/PPS 반복
-                iperiod=30,        # I-프레임 주기
-                framerate=30       # 30fps
+                bitrate=bitrate,    # 설정에서 가져온 비트레이트
+                repeat=True,        # SPS/PPS 반복
+                iperiod=framerate,  # I-프레임 주기 (프레임레이트와 동일)
+                framerate=framerate # 설정에서 가져온 프레임레이트
             )
 
             # MP4 파일 출력 설정
@@ -133,8 +147,12 @@ class GPURecorder:
             self.fail_count += 1
             return False
 
-    def start_continuous_recording(self, interval: int = 31):
+    def start_continuous_recording(self, interval: int = None):
         """연속 녹화 시작 (30초 단위)"""
+        # 설정에서 녹화 간격 가져오기
+        if interval is None:
+            interval = config_manager.get_segment_duration()
+
         if self.continuous_recording:
             logger.warning(f"[GPU-RECORDER] 카메라 {self.camera_id} 이미 연속 녹화 중 - 무시")
             return True  # 이미 실행 중이면 성공으로 처리
@@ -216,7 +234,9 @@ class CameraManager:
     
     def __init__(self):
         self.current_camera = 0
-        self.current_resolution = "640x480"
+        # 설정에서 기본 해상도 가져오기
+        default_quality = config_manager.get('streaming.default_quality', '640x480')
+        self.current_resolution = default_quality
         self.camera_instances = {}
         self.active_clients: Set[str] = set()
         self.dual_mode = False  # 듀얼 카메라 모드 플래그
@@ -227,9 +247,13 @@ class CameraManager:
         self.recording_threads = {}
         
         # 해상도 설정
+        # 설정에서 해상도 및 최대 클라이언트 수 가져오기
+        resolution = config_manager.get_resolution()
+        max_clients = config_manager.get_max_clients()
+
         self.RESOLUTIONS = {
-            "640x480": {"width": 640, "height": 480, "name": "480p", "max_clients": 2},
-            "1280x720": {"width": 1280, "height": 720, "name": "720p", "max_clients": 2}
+            "640x480": {"width": 640, "height": 480, "name": "480p", "max_clients": max_clients},
+            "1280x720": {"width": 1280, "height": 720, "name": "720p", "max_clients": max_clients}
         }
         
         # 녹화 시스템
@@ -542,8 +566,12 @@ class CameraManager:
         
         return True
     
-    def start_continuous_recording(self, camera_id: int, interval: int = 31):
+    def start_continuous_recording(self, camera_id: int, interval: int = None):
         """GPU 가속 연속 녹화 시작"""
+        # 설정에서 녹화 간격 가져오기
+        if interval is None:
+            interval = config_manager.get_segment_duration()
+
         if camera_id not in self.recorders:
             logger.error(f"[ERROR] 카메라 {camera_id} 레코더 없음")
             return
@@ -582,8 +610,12 @@ class CameraManager:
 
         logger.info("[GPU-RECORDING] 모든 GPU 녹화 비활성화")
 
-    def start_single_recording(self, camera_id: int, duration: int = 31):
+    def start_single_recording(self, camera_id: int, duration: int = None):
         """단일 GPU 녹화 (웹 UI용)"""
+        # 설정에서 녹화 시간 가져오기
+        if duration is None:
+            duration = config_manager.get_segment_duration()
+
         if camera_id not in self.recorders:
             logger.error(f"[ERROR] 카메라 {camera_id} 레코더 없음")
             return False
@@ -744,7 +776,7 @@ def main():
         config = uvicorn.Config(
             web_api.app,
             host="0.0.0.0",
-            port=8001,
+            port=config_manager.get_web_port(),
             log_level="info"
         )
         server = uvicorn.Server(config)

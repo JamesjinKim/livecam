@@ -19,6 +19,8 @@
 ```
 livecam/
 ├── webmain.py             # 통합 메인 서버 (스트리밍 + 녹화)
+├── config_manager.py      # 설정 관리자 모듈
+├── config.json            # JSON 설정 파일
 ├── web/                   # 웹 인터페이스
 │   ├── static/
 │   │   ├── index.html     # 듀얼 뷰 메인 페이지
@@ -52,6 +54,12 @@ livecam/
 - **반응형 디자인**: 모바일/데스크톱 지원
 - **하트비트 체크**: 3초 간격 연결 상태 확인
 
+### 4. JSON 설정 시스템
+- **유연한 설정 관리**: config.json 파일로 모든 설정 중앙화
+- **실시간 적용**: 서버 재시작 없이 설정 변경 가능
+- **기본값 제공**: 누락된 설정은 자동으로 기본값 적용
+- **점 표기법**: `recording.bitrate` 형태로 직관적 접근
+
 ## 핵심 클래스
 
 ### 1. CameraManager
@@ -81,6 +89,86 @@ class CCTVWebAPI:
     @app.post("/api/dual_mode/{enable}")
     @app.get("/api/stats")
 ```
+
+### 4. ConfigManager
+**역할**: JSON 설정 파일 관리
+```python
+class ConfigManager:
+    def get(self, path: str, default=None) -> Any
+    def set(self, path: str, value: Any) -> bool
+    def get_bitrate(self) -> int
+    def get_segment_duration(self) -> int
+    def reload(self) -> bool
+```
+
+## JSON 설정 시스템
+
+### config.json 구조
+```json
+{
+  "recording": {
+    "enabled": true,
+    "segment_duration": 31,      // 녹화 세그먼트 길이 (초)
+    "overlap_duration": 1,       // 세그먼트 오버랩 (초)
+    "bitrate": 5000000,          // 비트레이트 (bps)
+    "framerate": 30,             // 프레임레이트 (fps)
+    "resolution": [640, 480],    // 해상도 [가로, 세로]
+    "cameras": {
+      "0": {
+        "enabled": true,
+        "storage_path": "videos/cam0"
+      },
+      "1": {
+        "enabled": true,
+        "storage_path": "videos/cam1"
+      }
+    },
+    "cleanup": {
+      "enabled": false,          // 자동 정리 기능
+      "max_age_days": 30,        // 최대 보관 일수
+      "min_free_space_gb": 10    // 최소 여유 공간 (GB)
+    }
+  },
+  "streaming": {
+    "max_clients": 2,            // 최대 동시 접속자 수
+    "default_quality": "640x480",
+    "mirror_mode": true,         // 거울모드 활성화
+    "buffer_size": 10,           // 스트림 버퍼 크기
+    "stats_interval": 2000,      // 통계 업데이트 간격 (ms)
+    "heartbeat_interval": 3000   // 하트비트 체크 간격 (ms)
+  },
+  "system": {
+    "web_port": 8001,           // 웹 서버 포트
+    "log_level": "INFO",        // 로그 레벨
+    "gpu_memory_split": 256     // GPU 메모리 할당 (MB)
+  }
+}
+```
+
+### ConfigManager 사용법
+```python
+from config_manager import config_manager
+
+# 기본 사용법
+segment_duration = config_manager.get_segment_duration()  # 31
+bitrate = config_manager.get_bitrate()                    # 5000000
+
+# 점 표기법으로 직접 접근
+port = config_manager.get('system.web_port', 8001)       # 8001
+mirror = config_manager.get('streaming.mirror_mode')     # True
+
+# 설정 변경
+config_manager.set('recording.bitrate', 8000000)
+config_manager.save_config()
+
+# 설정 리로드
+config_manager.reload()
+```
+
+### 설정 변경 방법
+1. **파일 직접 수정**: `config.json` 파일을 편집
+2. **프로그래밍 방식**: ConfigManager의 `set()` 메서드 사용
+3. **실시간 적용**: 대부분 설정은 다음 동작 시 자동 적용
 
 ## 중요 설정
 
@@ -156,11 +244,18 @@ ps aux | grep python3
 
 ## 개발 정보
 
-### 주요 아키텍처 개선 (2025-09-23)
+### 주요 아키텍처 개선
+#### 2025-09-23 (통합 시스템)
 1. **카메라 인스턴스 재사용**: 중복 생성 방지, 안정성 향상
 2. **독립적 녹화 시스템**: 웹 접속과 무관한 24시간 연속 녹화
 3. **리소스 분리**: 스트리밍(lores) vs 녹화(main) 스트림 분리
 4. **오류 복구**: 웹 클라이언트 접속 시 녹화 중단 문제 해결
+
+#### 2025-09-23 (JSON 설정 시스템)
+1. **설정 중앙화**: 모든 하드코딩 값을 config.json으로 이동
+2. **ConfigManager 구현**: 설정 관리 전용 클래스 도입
+3. **유연한 설정**: 세그먼트 길이, 비트레이트 등 운영 중 변경 가능
+4. **기본값 제공**: 설정 누락 시 안전한 기본값 자동 적용
 
 ### 코딩 가이드라인
 - **Python**: PEP 8 준수
@@ -179,4 +274,4 @@ pip3 install fastapi uvicorn opencv-python numpy psutil
 
 ---
 
-**마지막 업데이트**: 2025-09-23 (통합 아키텍처 완성)
+**마지막 업데이트**: 2025-09-23 (JSON 설정 시스템 추가)
